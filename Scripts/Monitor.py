@@ -57,13 +57,21 @@ def monitor(main_ui):
             lessionid = lesson["lessonId"]
             lessonname = lesson["courseName"]
             classroomid = lesson["classroomId"]
+
+            # Avoid creating duplicate listeners for the same course.
+            already_listening = any(
+                item.lessonid == lessionid and item.classroomid == classroomid
+                for item in on_lesson_list
+            )
+            if already_listening:
+                continue
+
             lesson_obj = Lesson(lessionid,lessonname,classroomid,main_ui)
-            if lesson_obj not in on_lesson_list:
-                thread = threading.Thread(target=lesson_obj.start_lesson,args=(del_onclass,),daemon=True)
-                thread.start()
-                meg = "检测到课程%s正在上课，已加入监听列表" % lessonname
-                main_ui.add_message_signal.emit(meg,7)
-                on_lesson_list.append(lesson_obj)
+            thread = threading.Thread(target=lesson_obj.start_lesson,args=(del_onclass,),daemon=True)
+            thread.start()
+            meg = "检测到课程%s正在上课，已加入监听列表" % lessonname
+            main_ui.add_message_signal.emit(meg,7)
+            on_lesson_list.append(lesson_obj)
         
         # for lesson in lesson_list_old:
         #     lessionid = lesson["lesson_id"]

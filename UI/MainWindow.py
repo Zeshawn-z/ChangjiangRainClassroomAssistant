@@ -23,6 +23,7 @@ class MainWindow_Ui(QtCore.QObject):
     add_message_signal = QtCore.pyqtSignal(str,int)
     add_course_signal = QtCore.pyqtSignal(list,int)
     del_course_signal = QtCore.pyqtSignal(int)
+    update_ppt_image_signal = QtCore.pyqtSignal(str, str)
 
     def setupUi(self, MainWindow):
         # 对象变量初始化
@@ -127,6 +128,26 @@ class MainWindow_Ui(QtCore.QObject):
         self.tableWidget.verticalHeader().setHighlightSections(False)
         self.verticalLayout_3.addWidget(self.tableWidget)
         self.verticalLayout.addWidget(self.Table)
+        self.PPTPreview = QtWidgets.QGroupBox(self.Window)
+        self.PPTPreview.setStyleSheet("color: rgb(209, 209, 209);\n"
+    "font: 10pt \"微软雅黑\";\n"
+    "color: rgb(0, 0, 0);")
+        self.PPTPreview.setObjectName("PPTPreview")
+        self.verticalLayout_4 = QtWidgets.QVBoxLayout(self.PPTPreview)
+        self.verticalLayout_4.setObjectName("verticalLayout_4")
+        self.ppt_info_label = QtWidgets.QLabel(self.PPTPreview)
+        self.ppt_info_label.setStyleSheet("font: 9pt \"微软雅黑\";")
+        self.ppt_info_label.setText("当前PPT：暂无")
+        self.ppt_info_label.setObjectName("ppt_info_label")
+        self.verticalLayout_4.addWidget(self.ppt_info_label)
+        self.ppt_image_label = QtWidgets.QLabel(self.PPTPreview)
+        self.ppt_image_label.setMinimumSize(QtCore.QSize(0, 180))
+        self.ppt_image_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.ppt_image_label.setStyleSheet("background-color: rgb(40, 40, 40); color: rgb(220, 220, 220);")
+        self.ppt_image_label.setText("暂无PPT图片")
+        self.ppt_image_label.setObjectName("ppt_image_label")
+        self.verticalLayout_4.addWidget(self.ppt_image_label)
+        self.verticalLayout.addWidget(self.PPTPreview)
         self.Output = QtWidgets.QGroupBox(self.Window)
         self.Output.setStyleSheet("color: rgb(209, 209, 209);\n"
 "font: 10pt \"微软雅黑\";\n"
@@ -158,6 +179,7 @@ class MainWindow_Ui(QtCore.QObject):
         self.add_message_signal.connect(self.add_message)
         self.add_course_signal.connect(self.add_course)
         self.del_course_signal.connect(self.del_course)
+        self.update_ppt_image_signal.connect(self.update_ppt_preview)
 
         # 配置文件检查
         dir_route = get_config_dir()
@@ -184,6 +206,7 @@ class MainWindow_Ui(QtCore.QObject):
         self.config_btn.setText(_translate("MainWindow", "配置"))
         self.Table.setTitle(_translate("MainWindow", "监听列表"))
         self.Output.setTitle(_translate("MainWindow", "信息"))
+        self.PPTPreview.setTitle(_translate("MainWindow", "当前PPT"))
         item = self.tableWidget.horizontalHeaderItem(0)
         item.setText(_translate("MainWindow", "课程名"))
         item = self.tableWidget.horizontalHeaderItem(1)
@@ -300,6 +323,20 @@ class MainWindow_Ui(QtCore.QObject):
         self.output_textarea.append(time + message)
         if not type == 0:
             self.audio(message,type)
+
+    def update_ppt_preview(self, image_path, info_text):
+        self.ppt_info_label.setText(info_text if info_text else "当前PPT：暂无")
+
+        if image_path and os.path.exists(image_path):
+            pixmap = QtGui.QPixmap(image_path)
+            if not pixmap.isNull():
+                scaled = pixmap.scaled(self.ppt_image_label.size(), QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+                self.ppt_image_label.setPixmap(scaled)
+                self.ppt_image_label.setText("")
+                return
+
+        self.ppt_image_label.setPixmap(QtGui.QPixmap())
+        self.ppt_image_label.setText("暂无PPT图片")
 
     def active_clicked(self):
         # 启动按钮被点击

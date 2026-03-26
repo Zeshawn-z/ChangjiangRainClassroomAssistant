@@ -87,6 +87,16 @@ def get_initial_data():
                 }
             }
         },
+        "llm_config": {
+            "api_key": "",
+            "base_url": "https://api.openai.com",
+            "model": "gpt-3.5-turbo",
+            "answer_timeout": 120,
+            "connect_timeout": 10,
+            "test_timeout": 15
+        },
+        "auto_save_ppt": False,
+        "enable_devtools": False,
         "debug_mode":False
     }
     return initial_data

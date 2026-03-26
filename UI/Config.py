@@ -10,13 +10,17 @@
 
 from PyQt5 import QtCore, QtWidgets, QtGui
 from Scripts.Utils import get_config_path, resource_path
+try:
+    from Scripts.LLM import LLMHandler
+except ImportError:
+    LLMHandler = None
 import json
 import functools
 
 class Config_Ui(object):
     def setupUi(self, Dialog):
         Dialog.setObjectName("Dialog")
-        Dialog.resize(430, 550)
+        Dialog.resize(570, 550)
         Dialog.setStyleSheet("background-color: rgb(255, 255, 255);\n"
 "font: 9pt \"微软雅黑\";")
         Dialog.setWindowIcon(QtGui.QIcon(resource_path("UI\\Image\\favicon.ico")))
@@ -159,6 +163,73 @@ class Config_Ui(object):
         self.verticalLayout_8.addWidget(self.when_delay_time_2)
         self.verticalLayout_5.addWidget(self.when_answer_on)
         self.verticalLayout_12.addWidget(self.answer_config)
+        
+        self.llm_config_group = QtWidgets.QGroupBox(self.scrollAreaWidgetContents)
+        self.llm_config_group.setObjectName("llm_config_group")
+        self.verticalLayout_llm = QtWidgets.QVBoxLayout(self.llm_config_group)
+        self.verticalLayout_llm.setObjectName("verticalLayout_llm")
+        
+        self.llm_api_key_label = QtWidgets.QLabel(self.llm_config_group)
+        self.llm_api_key_label.setObjectName("llm_api_key_label")
+        self.verticalLayout_llm.addWidget(self.llm_api_key_label)
+        self.llm_api_key = QtWidgets.QLineEdit(self.llm_config_group)
+        self.llm_api_key.setObjectName("llm_api_key")
+        self.llm_api_key.setEchoMode(QtWidgets.QLineEdit.Password)
+        self.verticalLayout_llm.addWidget(self.llm_api_key)
+        
+        self.llm_base_url_label = QtWidgets.QLabel(self.llm_config_group)
+        self.llm_base_url_label.setObjectName("llm_base_url_label")
+        self.verticalLayout_llm.addWidget(self.llm_base_url_label)
+        self.llm_base_url = QtWidgets.QLineEdit(self.llm_config_group)
+        self.llm_base_url.setObjectName("llm_base_url")
+        self.verticalLayout_llm.addWidget(self.llm_base_url)
+        
+        self.llm_model_label = QtWidgets.QLabel(self.llm_config_group)
+        self.llm_model_label.setObjectName("llm_model_label")
+        self.verticalLayout_llm.addWidget(self.llm_model_label)
+        self.llm_model = QtWidgets.QLineEdit(self.llm_config_group)
+        self.llm_model.setObjectName("llm_model")
+        self.verticalLayout_llm.addWidget(self.llm_model)
+
+        self.llm_answer_timeout_label = QtWidgets.QLabel(self.llm_config_group)
+        self.llm_answer_timeout_label.setObjectName("llm_answer_timeout_label")
+        self.verticalLayout_llm.addWidget(self.llm_answer_timeout_label)
+        self.llm_answer_timeout = QtWidgets.QSpinBox(self.llm_config_group)
+        self.llm_answer_timeout.setRange(10, 600)
+        self.llm_answer_timeout.setValue(120)
+        self.llm_answer_timeout.setObjectName("llm_answer_timeout")
+        self.verticalLayout_llm.addWidget(self.llm_answer_timeout)
+
+        self.llm_test_timeout_label = QtWidgets.QLabel(self.llm_config_group)
+        self.llm_test_timeout_label.setObjectName("llm_test_timeout_label")
+        self.verticalLayout_llm.addWidget(self.llm_test_timeout_label)
+        self.llm_test_timeout = QtWidgets.QSpinBox(self.llm_config_group)
+        self.llm_test_timeout.setRange(5, 120)
+        self.llm_test_timeout.setValue(15)
+        self.llm_test_timeout.setObjectName("llm_test_timeout")
+        self.verticalLayout_llm.addWidget(self.llm_test_timeout)
+
+        self.test_llm_btn = QtWidgets.QPushButton(self.llm_config_group)
+        self.test_llm_btn.setObjectName("test_llm_btn")
+        self.verticalLayout_llm.addWidget(self.test_llm_btn)
+        
+        self.verticalLayout_12.addWidget(self.llm_config_group)
+
+        self.other_config_group = QtWidgets.QGroupBox(self.scrollAreaWidgetContents)
+        self.other_config_group.setObjectName("other_config_group")
+        self.verticalLayout_other = QtWidgets.QVBoxLayout(self.other_config_group)
+        self.verticalLayout_other.setObjectName("verticalLayout_other")
+        
+        self.auto_save_ppt = QtWidgets.QCheckBox(self.other_config_group)
+        self.auto_save_ppt.setObjectName("auto_save_ppt")
+        self.verticalLayout_other.addWidget(self.auto_save_ppt)
+        
+        self.enable_devtools = QtWidgets.QCheckBox(self.other_config_group)
+        self.enable_devtools.setObjectName("enable_devtools")
+        self.verticalLayout_other.addWidget(self.enable_devtools)
+        
+        self.verticalLayout_12.addWidget(self.other_config_group)
+
         self.scrollArea.setWidget(self.scrollAreaWidgetContents)
         self.verticalLayout.addWidget(self.scrollArea)
         self.btn_wid = QtWidgets.QWidget(Dialog)
@@ -183,6 +254,7 @@ class Config_Ui(object):
         self.delay_time_radio_1.clicked.connect(self.enable_delay_custom)
         self.delay_time_radio_2.clicked.connect(self.enable_delay_custom)
         self.save.clicked.connect(functools.partial(self.save_config,dialog=Dialog))
+        self.test_llm_btn.clicked.connect(self.test_llm_connection)
 
         self.retranslateUi(Dialog)
         QtCore.QMetaObject.connectSlotsByName(Dialog)
@@ -205,8 +277,10 @@ class Config_Ui(object):
         # 启用自动答题详细配置Widget
         if self.answer_on.isChecked():
             self.when_answer_on.setEnabled(True)
+            self.llm_config_group.setEnabled(True)
         else:   
             self.when_answer_on.setEnabled(False)
+            self.llm_config_group.setEnabled(False)
 
     def enable_delay_custom(self):
         # 启用自定义延迟详细配置Widget
@@ -236,6 +310,18 @@ class Config_Ui(object):
         elif config["answer_config"]["answer_delay"]["type"] == 2:
             self.delay_time_radio_2.setChecked(True)
         self.delay_time_2_input.setValue(config["answer_config"]["answer_delay"]["custom"]["time"])
+        
+        # LLM配置
+        llm_cfg = config.get("llm_config", {})
+        self.llm_api_key.setText(llm_cfg.get("api_key", ""))
+        self.llm_base_url.setText(llm_cfg.get("base_url", "https://api.openai.com"))
+        self.llm_model.setText(llm_cfg.get("model", "gpt-3.5-turbo"))
+        self.llm_answer_timeout.setValue(int(llm_cfg.get("answer_timeout", 120)))
+        self.llm_test_timeout.setValue(int(llm_cfg.get("test_timeout", 15)))
+        
+        self.auto_save_ppt.setChecked(config.get("auto_save_ppt", False))
+        self.enable_devtools.setChecked(config.get("enable_devtools", False))
+        
         self.dialog_config = config
 
     def save_config(self, dialog):
@@ -260,11 +346,49 @@ class Config_Ui(object):
         elif self.delay_time_radio_2.isChecked():
             config["answer_config"]["answer_delay"]["type"] = 2
         config["answer_config"]["answer_delay"]["custom"]["time"] = self.delay_time_2_input.value()
+        
+        # LLM配置
+        if "llm_config" not in config:
+            config["llm_config"] = {}
+        config["llm_config"]["api_key"] = self.llm_api_key.text()
+        config["llm_config"]["base_url"] = self.llm_base_url.text()
+        config["llm_config"]["model"] = self.llm_model.text()
+        config["llm_config"]["answer_timeout"] = self.llm_answer_timeout.value()
+        config["llm_config"]["test_timeout"] = self.llm_test_timeout.value()
+        
+        config["auto_save_ppt"] = self.auto_save_ppt.isChecked()
+        config["enable_devtools"] = self.enable_devtools.isChecked()
+        
         # 保存
         config_path = get_config_path()
         with open(config_path,"w+") as f:
             json.dump(config,f)
         dialog.accept()
+    
+    def test_llm_connection(self):
+        if not LLMHandler:
+            QtWidgets.QMessageBox.warning(None, "错误", "LLM 模块加载失败，请检查环境。")
+            return
+            
+        api_key = self.llm_api_key.text().strip()
+        base_url = self.llm_base_url.text().strip()
+        model = self.llm_model.text().strip()
+        answer_timeout = self.llm_answer_timeout.value()
+        test_timeout = self.llm_test_timeout.value()
+        
+        if not api_key:
+            QtWidgets.QMessageBox.warning(None, "提示", "请输入 API Key")
+            return
+            
+        try:
+            handler = LLMHandler(api_key, base_url, model, answer_timeout=answer_timeout, test_timeout=test_timeout)
+            success, msg = handler.test_connection()
+            if success:
+                QtWidgets.QMessageBox.information(None, "测试成功", msg)
+            else:
+                QtWidgets.QMessageBox.warning(None, "测试失败", msg)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(None, "错误", f"发生异常: {str(e)}")
 
     def retranslateUi(self, Dialog):
         _translate = QtCore.QCoreApplication.translate
@@ -289,5 +413,17 @@ class Config_Ui(object):
         self.delay_time_radio_1.setText(_translate("Dialog", "系统默认（随机决定时间）"))
         self.delay_time_radio_2.setText(_translate("Dialog", "自定义（于收到题目n秒后自动回答）"))
         self.label_2.setText(_translate("Dialog", "注：如果您采用自定义延迟时长，当延迟时长大于题目所给时限时，将按照系统默认算法重新计算延迟时长。"))
+        self.llm_config_group.setTitle(_translate("Dialog", "LLM 配置"))
+        self.llm_api_key_label.setText(_translate("Dialog", "API Key (如 sk-...)"))
+        self.llm_base_url_label.setText(_translate("Dialog", "Base URL (如 https://api.openai.com/v1)"))
+        self.llm_model_label.setText(_translate("Dialog", "Model (如 gpt-3.5-turbo, gpt-4-turbo)"))
+        self.llm_answer_timeout_label.setText(_translate("Dialog", "答题请求超时（秒，建议深度模型 >=120）"))
+        self.llm_test_timeout_label.setText(_translate("Dialog", "连接测试读取超时（秒）"))
+        self.test_llm_btn.setText(_translate("Dialog", "测试 LLM 连接"))
+        
+        self.other_config_group.setTitle(_translate("Dialog", "其他配置"))
+        self.auto_save_ppt.setText(_translate("Dialog", "自动保存 PPT (保存至课程文件夹)"))
+        self.enable_devtools.setText(_translate("Dialog", "启用 DevTools 记录器 (保存在 logs 文件夹)"))
+
         self.save.setText(_translate("Dialog", "保存"))
         self.cancel.setText(_translate("Dialog", "取消"))

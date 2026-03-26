@@ -1,0 +1,125 @@
+name: Build EXE
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag, e.g. v1.0.0 (optional)'
+        required: false
+        type: string
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-exe:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Convert requirements encoding (UTF-16 -> UTF-8)
+        shell: pwsh
+        run: |
+          $content = Get-Content requirements.txt
+          $content | Set-Content -Encoding utf8 requirements.utf8.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.utf8.txt
+          pip install pyinstaller
+
+      - name: Build single-file exe with icon
+        shell: pwsh
+        run: |
+          pyinstaller -F -w -i .\UI\Image\favicon.ico .\RainClassroomAssistant.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RainClassroomAssistant-windows-exe
+          path: dist/RainClassroomAssistant.exe
+          if-no-files-found: error
+
+  create-tag:
+    needs: build-windows-exe
+    runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{ steps.resolve_tag.outputs.tag_name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve tag
+        id: resolve_tag
+        env:
+          MANUAL_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          if [ -n "$MANUAL_TAG" ]; then
+            if [[ ! "$MANUAL_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Invalid tag format: $MANUAL_TAG"
+              exit 1
+            fi
+            NEXT_TAG="$MANUAL_TAG"
+          else
+            LATEST_TAG=$(git tag -l 'v*.*.*' --sort=-v:refname | head -n 1)
+            if [ -z "$LATEST_TAG" ]; then
+              NEXT_TAG="v1.0.0"
+            else
+              VERSION=${LATEST_TAG#v}
+              IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+              PATCH=$((PATCH + 1))
+              NEXT_TAG="v${MAJOR}.${MINOR}.${PATCH}"
+            fi
+          fi
+
+          echo "tag_name=$NEXT_TAG" >> "$GITHUB_OUTPUT"
+          echo "Resolved tag: $NEXT_TAG"
+
+      - name: Create and push tag
+        env:
+          TAG_NAME: ${{ steps.resolve_tag.outputs.tag_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Tag already exists: $TAG_NAME"
+          else
+            git tag "$TAG_NAME"
+            git push origin "$TAG_NAME"
+            echo "Tag pushed: $TAG_NAME"
+          fi
+
+  create-release:
+    needs: [build-windows-exe, create-tag]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: RainClassroomAssistant-windows-exe
+          path: release-assets
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.create-tag.outputs.tag_name }}
+          name: ${{ needs.create-tag.outputs.tag_name }}
+          generate_release_notes: true
+          files: release-assets/RainClassroomAssistant.exe

@@ -4,6 +4,8 @@ import time
 
 import requests
 
+from Scripts.Utils import build_server_url
+
 
 class LessonSolveMixin:
     def _collect_problem_fallback_images(self, problem_id, problem_data):
@@ -158,7 +160,7 @@ class LessonSolveMixin:
         if ptype == 3 and isinstance(result, list) and len(result) == 1:
             result = result[0]
 
-        url = "https://changjiang.yuketang.cn/api/v3/lesson/problem/answer"
+        url = build_server_url("/api/v3/lesson/problem/answer", self.config)
         data = {
             "problemId": problem_id,
             "problemType": ptype,

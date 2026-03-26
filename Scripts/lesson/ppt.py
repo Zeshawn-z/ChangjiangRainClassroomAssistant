@@ -3,14 +3,14 @@ import threading
 
 import requests
 
-from Scripts.Utils import dict_result
+from Scripts.Utils import build_server_url, dict_result
 
 
 class LessonPPTMixin:
     def _get_ppt(self, presentationid):
         # 获取课程各页ppt
         r = requests.get(
-            url="https://changjiang.yuketang.cn/api/v3/lesson/presentation/fetch?presentation_id=%s" % (presentationid),
+            url=build_server_url("/api/v3/lesson/presentation/fetch?presentation_id=%s" % (presentationid), self.config),
             headers=self.headers,
             proxies={"http": None, "https": None},
         )

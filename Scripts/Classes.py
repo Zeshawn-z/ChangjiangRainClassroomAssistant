@@ -2,7 +2,7 @@ import threading
 import os
 import requests
 
-from Scripts.Utils import get_user_info, dict_result
+from Scripts.Utils import build_server_url, dict_result, get_user_info
 from Scripts.lesson import LessonBaseMixin, LessonPPTMixin, LessonSolveMixin, LessonWSMixin
 
 try:
@@ -52,7 +52,7 @@ class Lesson(LessonWSMixin, LessonSolveMixin, LessonPPTMixin, LessonBaseMixin):
         self.add_course = main_ui.add_course_signal.emit
         self.del_course = main_ui.del_course_signal.emit
         self.config = main_ui.config
-        _, rtn = get_user_info(self.sessionid)
+        _, rtn = get_user_info(self.sessionid, self.config)
         self.user_uid = rtn["id"]
         self.user_uname = rtn["name"]
         self.main_ui = main_ui
@@ -88,9 +88,9 @@ class User:
     def __init__(self, uid):
         self.uid = uid
     
-    def get_userinfo(self, classroomid, headers):
+    def get_userinfo(self, classroomid, headers, config=None):
         r = requests.get(
-            "https://changjiang.yuketang.cn/v/course_meta/fetch_user_info_new?query_user_id=%s&classroom_id=%s" % (self.uid, classroomid),
+            build_server_url("/v/course_meta/fetch_user_info_new?query_user_id=%s&classroom_id=%s" % (self.uid, classroomid), config),
             headers=headers,
             proxies={"http": None, "https": None},
         )

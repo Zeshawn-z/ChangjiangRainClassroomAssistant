@@ -4,9 +4,7 @@ import time
 import requests
 import websocket
 
-from Scripts.Utils import dict_result
-
-WSS_URL = "wss://changjiang.yuketang.cn/wsapp/"
+from Scripts.Utils import build_server_url, dict_result
 
 
 class LessonWSMixin:
@@ -24,7 +22,7 @@ class LessonWSMixin:
 
     def checkin_class(self):
         r = requests.post(
-            url="https://changjiang.yuketang.cn/api/v3/lesson/checkin",
+            url=build_server_url("/api/v3/lesson/checkin", self.config),
             headers=self.headers,
             data=json.dumps({"source": 5, "lessonId": self.lessonid}),
             proxies={"http": None, "https": None},
@@ -108,7 +106,7 @@ class LessonWSMixin:
                         break
             else:
                 self.classmates_ls.append(sent_danmu_user)
-                sent_danmu_user.get_userinfo(self.classroomid, self.headers)
+                sent_danmu_user.get_userinfo(self.classroomid, self.headers, self.config)
                 meg = "%s课程的%s%s发送了弹幕：%s" % (
                     self.lessonname,
                     sent_danmu_user.sno,
@@ -174,7 +172,8 @@ class LessonWSMixin:
         time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
         index = self.main_ui.tableWidget.rowCount()
         self.add_course([self.lessonname, title, teacher, time_str], index)
-        self.wsapp = websocket.WebSocketApp(url=WSS_URL, header=self.headers, on_open=self.on_open, on_message=self.on_message)
+        ws_url = build_server_url("/wsapp/", self.config, ws=True)
+        self.wsapp = websocket.WebSocketApp(url=ws_url, header=self.headers, on_open=self.on_open, on_message=self.on_message)
         self.wsapp.run_forever()
         meg = "%s监听结束" % self.lessonname
         self.add_message(meg, 7)
@@ -182,7 +181,7 @@ class LessonWSMixin:
         return callback(self)
 
     def send_danmu(self, content):
-        url = "https://changjiang.yuketang.cn/api/v3/lesson/danmu/send"
+        url = build_server_url("/api/v3/lesson/danmu/send", self.config)
         data = {
             "extra": "",
             "fromStart": "50",
@@ -202,6 +201,6 @@ class LessonWSMixin:
         self.add_message(meg, 1)
 
     def get_lesson_info(self):
-        url = "https://changjiang.yuketang.cn/api/v3/lesson/basic-info"
+        url = build_server_url("/api/v3/lesson/basic-info", self.config)
         r = requests.get(url=url, headers=self.headers, proxies={"http": None, "https": None})
         return dict_result(r.text)["data"]

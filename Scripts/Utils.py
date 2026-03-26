@@ -9,6 +9,41 @@ import sys
 
 lock = threading.Lock()
 
+YUKETANG_SERVERS = {
+    "changjiang": {"name": "长江雨课堂", "host": "changjiang.yuketang.cn"},
+    "www": {"name": "雨课堂(主站)", "host": "www.yuketang.cn"},
+    "huanghe": {"name": "黄河雨课堂", "host": "huanghe.yuketang.cn"},
+    "pro": {"name": "荷塘雨课堂", "host": "pro.yuketang.cn"},
+}
+DEFAULT_SERVER_KEY = "changjiang"
+
+
+def normalize_server_key(server_key):
+    key = str(server_key or DEFAULT_SERVER_KEY).strip().lower()
+    if key not in YUKETANG_SERVERS:
+        return DEFAULT_SERVER_KEY
+    return key
+
+
+def get_server_key(config=None):
+    if isinstance(config, dict):
+        return normalize_server_key(config.get("server"))
+    return normalize_server_key(config)
+
+
+def get_server_host(config=None):
+    key = get_server_key(config)
+    return YUKETANG_SERVERS[key]["host"]
+
+
+def build_server_url(path, config=None, ws=False):
+    host = get_server_host(config)
+    scheme = "wss" if ws else "https"
+    normalized_path = str(path or "")
+    if not normalized_path.startswith("/"):
+        normalized_path = "/" + normalized_path
+    return f"{scheme}://{host}{normalized_path}"
+
 def say_something(text):
     # 带线程锁的语音函数
     lock.acquire()
@@ -61,6 +96,7 @@ def get_initial_data():
     initial_data = \
     {
         "sessionid":"",
+        "server":"changjiang",
         "auto_danmu":True,
         "danmu_config":{
             "danmu_limit":5
@@ -112,33 +148,33 @@ def get_config_dir():
     dir_route = appdata_route + "\\RainClassroomAssistant"
     return dir_route
 
-def get_user_info(sessionid):
+def get_user_info(sessionid, config=None):
     # 获取用户信息
     headers = {
         "Cookie":"sessionid=%s" % sessionid,
         "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:97.0) Gecko/20100101 Firefox/97.0",
     }
-    r = requests.get(url="https://changjiang.yuketang.cn/api/v3/user/basic-info",headers=headers,proxies={"http": None,"https":None})
+    r = requests.get(url=build_server_url("/api/v3/user/basic-info", config),headers=headers,proxies={"http": None,"https":None})
     rtn = dict_result(r.text)
     return (rtn["code"],rtn["data"])
 
-def get_on_lesson(sessionid):
+def get_on_lesson(sessionid, config=None):
     # 获取用户当前正在上课列表
     headers = {
         "Cookie":"sessionid=%s" % sessionid,
         "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:97.0) Gecko/20100101 Firefox/97.0",
     }
-    r = requests.get("https://changjiang.yuketang.cn/api/v3/classroom/on-lesson",headers=headers,proxies={"http": None,"https":None})
+    r = requests.get(build_server_url("/api/v3/classroom/on-lesson", config),headers=headers,proxies={"http": None,"https":None})
     rtn = dict_result(r.text)
     return rtn["data"]["onLessonClassrooms"]
 
-def get_on_lesson_old(sessionid):
+def get_on_lesson_old(sessionid, config=None):
     # 获取用户当前正在上课的列表（旧版）
     headers = {
         "Cookie":"sessionid=%s" % sessionid,
         "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:97.0) Gecko/20100101 Firefox/97.0",
     }
-    r = requests.get("https://www.yuketang.cn/v/course_meta/on_lesson_courses",headers=headers,proxies={"http": None,"https":None})
+    r = requests.get(build_server_url("/v/course_meta/on_lesson_courses", config),headers=headers,proxies={"http": None,"https":None})
     rtn = dict_result(r.text)
     return rtn["on_lessons"]
 

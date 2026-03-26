@@ -69,6 +69,12 @@ class MainWindow_Ui(QtCore.QObject):
         self.horizontalLayout_3.addWidget(self.label_2)
         spacerItem = QtWidgets.QSpacerItem(40, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum)
         self.horizontalLayout_3.addItem(spacerItem)
+        self.server_select = QtWidgets.QComboBox(self.Menu)
+        self.server_select.setMaximumSize(QtCore.QSize(170, 400))
+        self.server_select.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
+        self.server_select.setStyleSheet("background-color: rgb(255, 255, 255);")
+        self.server_select.setObjectName("server_select")
+        self.horizontalLayout_3.addWidget(self.server_select)
         self.active_btn = QtWidgets.QPushButton(self.Menu)
         self.active_btn.setMaximumSize(QtCore.QSize(100, 400))
         self.active_btn.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
@@ -91,9 +97,9 @@ class MainWindow_Ui(QtCore.QObject):
         self.config_btn.setObjectName("config_btn")
         self.horizontalLayout_3.addWidget(self.config_btn)
         self.horizontalLayout_3.setStretch(2, 1)
-        self.horizontalLayout_3.setStretch(3, 1)
         self.horizontalLayout_3.setStretch(4, 1)
         self.horizontalLayout_3.setStretch(5, 1)
+        self.horizontalLayout_3.setStretch(6, 1)
         self.verticalLayout.addWidget(self.Menu)
         self.Table = QtWidgets.QGroupBox(self.Window)
         self.Table.setStyleSheet("color: rgb(209, 209, 209);\n"
@@ -174,6 +180,7 @@ class MainWindow_Ui(QtCore.QObject):
         self.config_btn.clicked.connect(self.show_config)
         self.login_btn.clicked.connect(self.show_login)
         self.active_btn.clicked.connect(self.active_clicked)
+        self.server_select.currentIndexChanged.connect(self.on_server_changed)
 
         # 绑定信号槽
         self.add_message_signal.connect(self.add_message)
@@ -185,6 +192,7 @@ class MainWindow_Ui(QtCore.QObject):
         dir_route = get_config_dir()
         config_route = get_config_path()
         self.config = self.check_config(dir_route, config_route)
+        self.init_server_select()
 
         self.add_message_signal.emit("当前版本：v0.0.4",0)
         self.add_message_signal.emit("初始化完成",0)
@@ -201,6 +209,7 @@ class MainWindow_Ui(QtCore.QObject):
         _translate = QtCore.QCoreApplication.translate
         MainWindow.setWindowTitle(_translate("MainWindow", "摸鱼课堂"))
         self.label_2.setText(_translate("MainWindow", "摸鱼课堂"))
+        self.server_select.setToolTip(_translate("MainWindow", "选择雨课堂服务器"))
         self.active_btn.setText(_translate("MainWindow", "启用"))
         self.login_btn.setText(_translate("MainWindow", "登录"))
         self.config_btn.setText(_translate("MainWindow", "配置"))
@@ -300,6 +309,10 @@ class MainWindow_Ui(QtCore.QObject):
             try:
                 with open(config_route,"r") as f:
                     data = json.load(f)
+                if "server" not in data:
+                    data["server"] = DEFAULT_SERVER_KEY
+                    with open(config_route,"w+") as f:
+                        json.dump(data, f)
                     self.add_message_signal.emit("配置文件已读取",0)
                     return data
             except:
@@ -309,9 +322,40 @@ class MainWindow_Ui(QtCore.QObject):
                     self.add_message_signal.emit("配置文件读取失败，已重新生成",0)
                     return initial_data
 
+    def init_server_select(self):
+        self.server_select.blockSignals(True)
+        self.server_select.clear()
+        for key, item in YUKETANG_SERVERS.items():
+            self.server_select.addItem(item["name"], key)
+
+        current_key = get_server_key(self.config)
+        index = self.server_select.findData(current_key)
+        if index < 0:
+            index = self.server_select.findData(DEFAULT_SERVER_KEY)
+        if index >= 0:
+            self.server_select.setCurrentIndex(index)
+        self.server_select.blockSignals(False)
+
+    def on_server_changed(self):
+        index = self.server_select.currentIndex()
+        if index < 0:
+            return
+        new_key = self.server_select.itemData(index)
+        new_key = get_server_key(new_key)
+        old_key = get_server_key(self.config)
+        if new_key == old_key:
+            return
+
+        self.config["server"] = new_key
+        config_route = get_config_path()
+        with open(config_route, "w+") as f:
+            json.dump(self.config, f)
+        self.add_message_signal.emit(f"已切换服务器：{YUKETANG_SERVERS[new_key]['name']}", 0)
+        self.add_message_signal.emit("提示：切换服务器后建议重新登录", 0)
+
     def check_login(self):
         # 检查登录状态
-        code, user_info = get_user_info(self.config["sessionid"])
+        code, user_info = get_user_info(self.config["sessionid"], self.config)
         if code == 50000:
             return False,user_info
         elif code == 0:

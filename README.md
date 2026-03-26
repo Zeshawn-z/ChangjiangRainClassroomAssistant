@@ -1,18 +1,189 @@
 # RainClassroomAssitant
-&emsp;&emsp;基于Python的雨课堂线上课划水小助手。
-## 介绍
-&emsp;&emsp;疫情期间，网课成为了当前重要的教学方式。这种方式在疫情期间为诸位都提供了极大的便利。但是，不免有些线上水课，这些水课老师不仅仅讲的内容枯燥无聊，照着PPT读，还要整出一系列的活来提升听课率，例如：课堂中途偷袭式发题、点名，将弹幕回答问题记录作为考察平时成绩的依据等。为了解决线上水课不能安心划水的问题，雨课堂小助手应运而生。
-## 已实现功能
- - 自动签到
- - 自动答题（仅限于上课过程中发布的选择题、多选题、填空题）
- - 自动发弹幕（一定时间内收到一定数量的弹幕后，自动跟风发送相同内容的弹幕）
- - 点名、收到题目等情况下的语音提醒
- - 多线程支持（此脚本支持在有多个正在上课课程的情况下使用）
- - 简洁美观的UI
-## 待做功能
-- [ ] 自动预习
-## 使用方法
-### 使用前准备
-1. **使用前最好关闭所有代理程序，否则程序可能无法正常使用**
-### 使用程序
-v0.0.3版本，更新UI，此后版本双击打开即可使用！
+
+一个基于 Python + PyQt5 的雨课堂桌面辅助工具，用于课程监听、消息提醒、PPT 预览与自动化处理。
+
+## 功能特性
+
+- 自动签到
+- 自动答题（支持课堂中发布的常见题型）
+- 自动弹幕跟发（阈值触发）
+- 点名、题目发布等场景的语音提示
+- 多课程并行监听
+- PPT 页面预览与本地保存
+- 可切换服务器节点（主窗口可选）
+  - 长江雨课堂（默认）
+  - 雨课堂主站
+  - 黄河雨课堂
+  - 荷塘雨课堂
+
+## 环境要求
+
+- Windows 10/11
+- Python 3.10 及以上
+
+## 本地运行
+
+1. 安装依赖
+
+	pip install -r requirements.txt
+
+2. 启动程序
+
+	python RainClassroomAssistant.py
+
+3. 在主窗口顶部选择服务器（默认长江）
+4. 点击登录，扫码完成授权
+5. 点击启用开始监听
+
+说明：切换服务器后会自动清空当前 session 并弹出登录窗口，需要重新扫码。
+
+## 打包 EXE
+
+本地打包命令（单文件 + 图标）：
+
+pyinstaller -F -w -i .\UI\Image\favicon.ico .\RainClassroomAssistant.py
+
+产物默认在 dist 目录下。
+
+## GitHub Actions 自动构建与发布
+
+仓库已提供工作流文件：
+
+- .github/workflows/build-exe.yml
+
+能力包括：
+
+- 自动构建 Windows 单文件 EXE（含图标）
+- 自动生成或使用指定语义化标签（例如 v1.0.0）
+- 自动创建 Release 并上传 EXE 附件
+
+## LLM 配置指南
+
+在主界面点击 配置，在 LLM 配置 区域填写以下参数：
+
+- API Key：模型平台密钥
+- Base URL：OpenAI 兼容接口根地址
+- Model：模型名称
+- 答题请求超时：单题请求最大等待时长（秒）
+- 连接测试读取超时：点击测试按钮时的网络读取超时（秒）
+
+建议配置：
+
+- Base URL 推荐填写到 v1，例如 https://api.openai.com/v1
+- 答题请求超时建议 120 秒起
+- 先用轻量模型验证稳定性，再切换更强模型
+
+说明：
+
+- 程序会自动处理 Base URL 尾部 v1（未填写时自动补齐）
+- 点击 测试 LLM 连接 可以快速验证 key、网关和模型权限是否可用
+
+示例 llm_config：
+
+{
+  "api_key": "sk-xxxx",
+  "base_url": "https://api.openai.com/v1",
+  "model": "gpt-4o-mini",
+  "answer_timeout": 120,
+  "connect_timeout": 10,
+  "test_timeout": 15
+}
+
+## 自动答题流程
+
+1. 监听到题目事件（如 unlockproblem、probleminfo）
+2. 进入自动答题调度，检查：
+   - 是否开启 auto_answer
+   - 该题是否已答过
+   - 本地缓存是否已有答案
+3. 若无缓存答案且已配置 LLM，则请求模型解题
+4. 若题面信息不足，会触发 PPT 图片兜底再请求一次
+5. 归一化答案格式（单选/多选/填空）
+6. 按延迟策略到时提交答案
+7. 成功后标记为已作答，避免重复提交
+
+当前实现的保护机制：
+
+- 题目已答过会跳过重复提交
+- 未配置 LLM 且无缓存答案会输出提示
+- 对模型输出进行选项字母归一化，降低格式错误概率
+
+## PPT 题目数据格式
+
+题目源自 PPT 接口中的 slides 数据。程序会抽取每页题目信息并写入本地题库文件。
+
+来源结构（简化）：
+
+- data.slides[]
+- slide.cover：该页图片 URL
+- slide.problem：该页题目对象
+
+本地题库文件路径：
+
+- problems/problems_<lesson_id>.json
+
+本地题目对象结构（核心字段）：
+
+{
+  "problemId": "123456",
+  "problemType": 1,
+  "body": "题干文本",
+  "options": [
+    {"key": "A", "value": "选项A"},
+    {"key": "B", "value": "选项B"}
+  ],
+  "answers": ["A"],
+  "limit": 30,
+  "sendTime": 1730000000000,
+  "result": null
+}
+
+补充说明：
+
+- 若开启 自动保存 PPT，图片会保存到 PPTs/课程名_课程ID/presentationID/slide_x.jpg
+- 程序会维护题目与页码、presentation 的映射关系，用于提示与图片兜底
+
+## DevTools 使用说明
+
+启用方式：
+
+1. 打开 配置
+2. 勾选 启用 DevTools 记录器
+3. 保存后重新开始监听课程
+
+日志位置：
+
+- logs 目录，文件格式为 jsonl（每行一条 JSON 事件）
+
+常见事件：
+
+- session_start / session_end
+- ws_open
+- ws_message_xxx
+- get_ppt
+- checkin_class
+- answer_problem / answer_response
+
+排错建议：
+
+1. 先确认日志里有 session_start，确保记录器已启用
+2. 检查是否收到 ws_message_unlockproblem / ws_message_probleminfo
+3. 查看 answer_problem 的 payload 与 answer_response 返回码
+4. 若题目无法识别，查看 get_ppt 事件里 slides 与 problem 字段
+
+## 项目结构（节选）
+
+- RainClassroomAssistant.py：程序入口
+- UI/MainWindow.py：主窗口与交互逻辑
+- UI/Login.py：扫码登录流程
+- Scripts/Monitor.py：课程监听调度
+- Scripts/lesson：课程 websocket、PPT、答题逻辑
+- Scripts/Utils.py：公共工具与配置
+
+## 免责声明
+
+1. 本项目仅用于学习研究、个人技术交流与自动化开发实践。
+2. 使用者应遵守所在学校、课程平台与相关法律法规的规定。
+3. 严禁将本项目用于作弊、破坏教学秩序、批量刷课、攻击平台或任何违法违规用途。
+4. 因不当使用本项目产生的任何后果，由使用者自行承担，项目作者与贡献者不承担任何责任。
+5. 平台接口与策略可能随时变更，项目不保证持续可用性、稳定性或兼容性。

@@ -29,6 +29,7 @@ class MainWindow_Ui(QtCore.QObject):
         # 对象变量初始化
         self.table_index = []
         self.is_active = False
+        self.skip_auto_login_until_start = False
 
         MainWindow.setObjectName("MainWindow")
         MainWindow.resize(800, 700)
@@ -203,7 +204,8 @@ class MainWindow_Ui(QtCore.QObject):
             self.login_btn.setText("重新登录")
             self.add_message_signal.emit("登录成功，当前登录用户："+user_info["name"],0)
         else:
-            self.show_login()
+            self.login_btn.setText("登录")
+            self.add_message_signal.emit("当前未登录，点击“登录”或“启用”后可进行登录",0)
 
     def retranslateUi(self, MainWindow):
         _translate = QtCore.QCoreApplication.translate
@@ -264,14 +266,14 @@ class MainWindow_Ui(QtCore.QObject):
             with open(config_route,"r") as f:
                 self.config = json.load(f)
 
-    def show_login(self, _bool=False, rtn_message=""):
+    def show_login(self, _bool=False, rtn_message="", auto_popup=False):
         # 展示登录对话框
         # rtn_message用于展示上次扫码登录失败的信息
         dialog = QtWidgets.QDialog()
         login_ui = Login_Ui()
-        login_ui.setupUi(dialog)
-        # 加载配置文件，主要用于加载sessionid
+        # 先加载配置，setupUi 内会启动登录 websocket 并依赖 self.config
         login_ui.load_config(self.config)
+        login_ui.setupUi(dialog)
 
         # 将最下方登录返回值栏设置rtn_message
         login_ui.login_return.setText(rtn_message)
@@ -289,8 +291,17 @@ class MainWindow_Ui(QtCore.QObject):
         if status and success:
             self.add_message_signal.emit("登录成功，当前登录用户："+user_info["name"],0)
             self.login_btn.setText("重新登录")
-        if not status:
-            self.show_login(rtn_message="登录失败，请重新登录")
+            self.skip_auto_login_until_start = False
+            return True
+
+        if not success:
+            if auto_popup:
+                self.skip_auto_login_until_start = True
+                self.add_message_signal.emit("已取消自动登录提示，将在点击“启用”时再次提示登录",0)
+            return False
+
+        self.add_message_signal.emit("登录失败，请点击“登录”重试",0)
+        return False
         
     def check_config(self, dir_route, config_route):
         # 检查配置文件
@@ -309,12 +320,14 @@ class MainWindow_Ui(QtCore.QObject):
             try:
                 with open(config_route,"r") as f:
                     data = json.load(f)
+                if not isinstance(data, dict):
+                    raise ValueError("Invalid config format")
                 if "server" not in data:
                     data["server"] = DEFAULT_SERVER_KEY
                     with open(config_route,"w+") as f:
                         json.dump(data, f)
-                    self.add_message_signal.emit("配置文件已读取",0)
-                    return data
+                self.add_message_signal.emit("配置文件已读取",0)
+                return data
             except:
                 with open(config_route,"w+") as f:
                     initial_data = get_initial_data()
@@ -347,19 +360,34 @@ class MainWindow_Ui(QtCore.QObject):
             return
 
         self.config["server"] = new_key
+        # 切换服务器后旧 sessionid 通常失效，清空以避免误用
+        self.config["sessionid"] = ""
         config_route = get_config_path()
         with open(config_route, "w+") as f:
             json.dump(self.config, f)
         self.add_message_signal.emit(f"已切换服务器：{YUKETANG_SERVERS[new_key]['name']}", 0)
-        self.add_message_signal.emit("提示：切换服务器后建议重新登录", 0)
+        self.add_message_signal.emit("服务器已切换，正在打开登录窗口", 0)
+
+        if self.is_active:
+            self.add_message_signal.emit("当前正在监听，请先停止监听后再登录", 0)
+            return
+
+        self.skip_auto_login_until_start = False
+        self.show_login(rtn_message="服务器已切换，请重新登录", auto_popup=True)
 
     def check_login(self):
         # 检查登录状态
-        code, user_info = get_user_info(self.config["sessionid"], self.config)
-        if code == 50000:
+        sessionid = self.config.get("sessionid", "") if isinstance(self.config, dict) else ""
+        if not sessionid:
+            return False, {}
+
+        try:
+            code, user_info = get_user_info(sessionid, self.config)
+            if code == 0:
+                return True,user_info
             return False,user_info
-        elif code == 0:
-            return True,user_info
+        except Exception:
+            return False, {}
             
     def add_message(self, message, type=0):
         # 新增输出信息，并尝试语音播报
@@ -387,6 +415,11 @@ class MainWindow_Ui(QtCore.QObject):
         if self.is_active:
             self.deactive()
         else:
+            status, _ = self.check_login()
+            if not status:
+                rtn = self.show_login(rtn_message="启动监听前请先登录")
+                if not rtn:
+                    return
             self.active()
 
     def active(self):

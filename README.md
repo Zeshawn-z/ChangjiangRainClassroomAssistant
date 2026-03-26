@@ -69,7 +69,7 @@ pyinstaller -F -w -i .\UI\Image\favicon.ico .\RainClassroomAssistant.py
 
 建议配置：
 
-- Base URL 推荐填写到 v1，例如 https://api.openai.com/v1
+- Base URL 推荐填写到 v1，例如 https://api.siliconflow.cn/v1
 - 答题请求超时建议 120 秒起
 - 先用轻量模型验证稳定性，再切换更强模型
 
@@ -82,8 +82,8 @@ pyinstaller -F -w -i .\UI\Image\favicon.ico .\RainClassroomAssistant.py
 
 {
   "api_key": "sk-xxxx",
-  "base_url": "https://api.openai.com/v1",
-  "model": "gpt-4o-mini",
+  "base_url": "https://api.siliconflow.cn/v1",
+  "model": "Qwen/Qwen3-VL-235B-A22B-Instruct",
   "answer_timeout": 120,
   "connect_timeout": 10,
   "test_timeout": 15

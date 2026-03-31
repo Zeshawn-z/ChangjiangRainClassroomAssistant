@@ -10,6 +10,7 @@
 - 点名、题目发布等场景的语音提示
 - 多课程并行监听
 - PPT 页面预览与本地保存
+- 一次性定时任务（可配置下一次开始/结束监听时间）
 - 可切换服务器节点（主窗口可选）
   - 长江雨课堂（默认）
   - 雨课堂主站
@@ -71,9 +72,11 @@ pyinstaller -F -w -i .\UI\Image\favicon.ico .\RainClassroomAssistant.py
 
 - API Key：模型平台密钥
 - Base URL：OpenAI 兼容接口根地址
-- Model：模型名称
+- Thinking Model：默认解题模型（先用它判断是否缺图）
+- VL Model：视觉解题模型（收到缺图标记时再调用）
 - 答题请求超时：单题请求最大等待时长（秒）
 - 连接测试读取超时：点击测试按钮时的网络读取超时（秒）
+- 保存 LLM 调用日志：建议开启，便于复盘
 
 建议配置：
 
@@ -84,17 +87,22 @@ pyinstaller -F -w -i .\UI\Image\favicon.ico .\RainClassroomAssistant.py
 说明：
 
 - 程序会自动处理 Base URL 尾部 v1（未填写时自动补齐）
-- 点击 测试 LLM 连接 可以快速验证 key、网关和模型权限是否可用
+- 点击 测试 LLM 连接 会分别验证 Thinking/VL 两个模型
+- 默认先调用 Thinking 模型；若其返回特殊标记 __NEED_PPT_IMAGE__，再把当前页 PPT 图片发给 VL 模型
+- 程序会约束模型输出为 JSON 对象格式，减少自由文本导致的解析失败
 
 示例 llm_config：
 
 {
   "api_key": "sk-xxxx",
   "base_url": "https://api.siliconflow.cn/v1",
-  "model": "Qwen/Qwen3-VL-235B-A22B-Instruct",
+  "model": "Qwen/Qwen3-32B",
+  "thinking_model": "Qwen/Qwen3-32B",
+  "vl_model": "Qwen/Qwen3-VL-235B-A22B-Instruct",
   "answer_timeout": 120,
   "connect_timeout": 10,
-  "test_timeout": 15
+  "test_timeout": 15,
+  "save_log": true
 }
 
 ## 自动答题流程

@@ -11,13 +11,12 @@ class LessonSolveMixin:
     def _collect_problem_fallback_images(self, problem_id, problem_data):
         images = []
 
-        if isinstance(problem_data, dict):
-            cover = problem_data.get("cover")
-            if isinstance(cover, str) and cover.startswith("http"):
-                images.append(cover)
-
         normalized_id = self._normalize_problem_id(problem_id)
         if not normalized_id:
+            if isinstance(problem_data, dict):
+                cover = problem_data.get("cover")
+                if isinstance(cover, str) and cover.startswith("http"):
+                    images.append(cover)
             return images
 
         presentation_id = self.problem_presentation_map.get(normalized_id)
@@ -29,11 +28,10 @@ class LessonSolveMixin:
             if isinstance(current_cover, str) and current_cover.startswith("http") and current_cover not in images:
                 images.append(current_cover)
 
-            for _, cover_url in sorted(cover_map.items(), key=lambda x: x[0]):
-                if isinstance(cover_url, str) and cover_url.startswith("http") and cover_url not in images:
-                    images.append(cover_url)
-                if len(images) >= 10:
-                    break
+        if isinstance(problem_data, dict):
+            cover = problem_data.get("cover")
+            if isinstance(cover, str) and cover.startswith("http") and cover not in images:
+                images.append(cover)
 
         return images
 
@@ -235,7 +233,7 @@ class LessonSolveMixin:
                 if not ok:
                     self.auto_answer_scheduled.discard(problem_id)
             else:
-                self.add_message(f"LLM 未返回题目 {problem_id} 的答案", 4)
+                self.add_message(f"LLM 未返回题目 {problem_id} 的有效答案（Thinking/VL均未产出）", 4)
                 self.auto_answer_scheduled.discard(problem_id)
         except Exception as e:
             self.add_message(f"LLM 答题出错: {e}", 4)

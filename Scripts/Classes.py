@@ -68,8 +68,21 @@ class Lesson(LessonWSMixin, LessonSolveMixin, LessonPPTMixin, LessonBaseMixin):
         self.llm_handler = None
         llm_cfg = self.config.get("llm_config")
         if llm_cfg and llm_cfg.get("api_key") and LLMHandler:
+            legacy_model = llm_cfg.get("model", "gpt-4o-mini")
+            if not llm_cfg.get("thinking_model"):
+                llm_cfg["thinking_model"] = legacy_model
+            if not llm_cfg.get("vl_model"):
+                llm_cfg["vl_model"] = llm_cfg.get("thinking_model", legacy_model)
+            if "save_log" not in llm_cfg:
+                llm_cfg["save_log"] = True
             self.llm_handler = LLMHandler(**llm_cfg)
-            self.add_message("LLM 自动答题已启用", 1)
+            self.add_message(
+                "LLM 自动答题已启用 (Thinking: %s, VL: %s)" % (
+                    llm_cfg.get("thinking_model"),
+                    llm_cfg.get("vl_model"),
+                ),
+                1,
+            )
             # If local cache has unsolved problems, precompute answers in background.
             for pid in list(self.problem_cache.keys()):
                 if not self._has_cached_answers(pid):

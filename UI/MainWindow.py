@@ -30,6 +30,12 @@ class MainWindow_Ui(QtCore.QObject):
         self.table_index = []
         self.is_active = False
         self.skip_auto_login_until_start = False
+        self.schedule_start_time = None
+        self.schedule_end_time = None
+        self.schedule_start_triggered = False
+        self.schedule_timer = QtCore.QTimer()
+        self.schedule_timer.setInterval(1000)
+        self.schedule_timer.timeout.connect(self.check_schedule_task)
 
         MainWindow.setObjectName("MainWindow")
         MainWindow.resize(800, 700)
@@ -97,10 +103,18 @@ class MainWindow_Ui(QtCore.QObject):
         self.config_btn.setStyleSheet("background-color: rgb(255, 255, 255);")
         self.config_btn.setObjectName("config_btn")
         self.horizontalLayout_3.addWidget(self.config_btn)
+        self.schedule_btn = QtWidgets.QPushButton(self.Menu)
+        self.schedule_btn.setMaximumSize(QtCore.QSize(120, 400))
+        self.schedule_btn.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
+        self.schedule_btn.setAutoFillBackground(False)
+        self.schedule_btn.setStyleSheet("background-color: rgb(255, 255, 255);")
+        self.schedule_btn.setObjectName("schedule_btn")
+        self.horizontalLayout_3.addWidget(self.schedule_btn)
         self.horizontalLayout_3.setStretch(2, 1)
         self.horizontalLayout_3.setStretch(4, 1)
         self.horizontalLayout_3.setStretch(5, 1)
         self.horizontalLayout_3.setStretch(6, 1)
+        self.horizontalLayout_3.setStretch(7, 1)
         self.verticalLayout.addWidget(self.Menu)
         self.Table = QtWidgets.QGroupBox(self.Window)
         self.Table.setStyleSheet("color: rgb(209, 209, 209);\n"
@@ -181,6 +195,7 @@ class MainWindow_Ui(QtCore.QObject):
         self.config_btn.clicked.connect(self.show_config)
         self.login_btn.clicked.connect(self.show_login)
         self.active_btn.clicked.connect(self.active_clicked)
+        self.schedule_btn.clicked.connect(self.show_schedule_dialog)
         self.server_select.currentIndexChanged.connect(self.on_server_changed)
 
         # 绑定信号槽
@@ -207,6 +222,8 @@ class MainWindow_Ui(QtCore.QObject):
             self.login_btn.setText("登录")
             self.add_message_signal.emit("当前未登录，点击“登录”或“启用”后可进行登录",0)
 
+        self.update_schedule_button_text()
+
     def retranslateUi(self, MainWindow):
         _translate = QtCore.QCoreApplication.translate
         MainWindow.setWindowTitle(_translate("MainWindow", "摸鱼课堂"))
@@ -215,6 +232,7 @@ class MainWindow_Ui(QtCore.QObject):
         self.active_btn.setText(_translate("MainWindow", "启用"))
         self.login_btn.setText(_translate("MainWindow", "登录"))
         self.config_btn.setText(_translate("MainWindow", "配置"))
+        self.schedule_btn.setText(_translate("MainWindow", "定时任务"))
         self.Table.setTitle(_translate("MainWindow", "监听列表"))
         self.Output.setTitle(_translate("MainWindow", "信息"))
         self.PPTPreview.setTitle(_translate("MainWindow", "当前PPT"))
@@ -410,6 +428,147 @@ class MainWindow_Ui(QtCore.QObject):
         self.ppt_image_label.setPixmap(QtGui.QPixmap())
         self.ppt_image_label.setText("暂无PPT图片")
 
+    def format_schedule_time(self, dt):
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    def update_schedule_button_text(self):
+        if self.schedule_start_time and self.schedule_end_time:
+            self.schedule_btn.setText("定时任务(已设置)")
+        else:
+            self.schedule_btn.setText("定时任务")
+
+    def set_schedule_task(self, start_time, end_time):
+        self.schedule_start_time = start_time
+        self.schedule_end_time = end_time
+        self.schedule_start_triggered = False
+        self.schedule_timer.start()
+        self.update_schedule_button_text()
+        self.add_message_signal.emit(
+            "已设置定时任务：%s 开始，%s 结束"
+            % (self.format_schedule_time(start_time), self.format_schedule_time(end_time)),
+            0
+        )
+
+    def clear_schedule_task(self, show_message=False):
+        had_task = self.schedule_start_time is not None and self.schedule_end_time is not None
+        self.schedule_start_time = None
+        self.schedule_end_time = None
+        self.schedule_start_triggered = False
+        self.schedule_timer.stop()
+        self.update_schedule_button_text()
+        if had_task and show_message:
+            self.add_message_signal.emit("已清除定时任务", 0)
+
+    def show_schedule_dialog(self):
+        dialog = QtWidgets.QDialog()
+        dialog.setWindowTitle("定时任务")
+        dialog.setWindowIcon(QtGui.QIcon(resource_path("UI\\Image\\favicon.ico")))
+        dialog.resize(420, 220)
+        dialog.setStyleSheet("background-color: rgb(255, 255, 255); font: 9pt \"微软雅黑\";")
+
+        layout = QtWidgets.QVBoxLayout(dialog)
+
+        current_label = QtWidgets.QLabel(dialog)
+        current_label.setWordWrap(True)
+        if self.schedule_start_time and self.schedule_end_time:
+            current_label.setText(
+                "当前任务：%s 开始，%s 结束"
+                % (self.format_schedule_time(self.schedule_start_time), self.format_schedule_time(self.schedule_end_time))
+            )
+        else:
+            current_label.setText("当前任务：未设置")
+        layout.addWidget(current_label)
+
+        form_layout = QtWidgets.QFormLayout()
+        start_edit = QtWidgets.QDateTimeEdit(dialog)
+        end_edit = QtWidgets.QDateTimeEdit(dialog)
+        for edit in (start_edit, end_edit):
+            edit.setCalendarPopup(True)
+            edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+
+        now_qt = QtCore.QDateTime.currentDateTime()
+        default_start = now_qt.addSecs(60)
+        default_end = now_qt.addSecs(3600)
+        if self.schedule_start_time and self.schedule_end_time:
+            default_start = QtCore.QDateTime.fromSecsSinceEpoch(int(self.schedule_start_time.timestamp()))
+            default_end = QtCore.QDateTime.fromSecsSinceEpoch(int(self.schedule_end_time.timestamp()))
+
+        start_edit.setDateTime(default_start)
+        end_edit.setDateTime(default_end)
+
+        def sync_end_minimum():
+            end_edit.setMinimumDateTime(start_edit.dateTime().addSecs(1))
+
+        sync_end_minimum()
+        start_edit.dateTimeChanged.connect(lambda _dt: sync_end_minimum())
+
+        form_layout.addRow("开始时间", start_edit)
+        form_layout.addRow("结束时间", end_edit)
+        layout.addLayout(form_layout)
+
+        tip_label = QtWidgets.QLabel("说明：到达开始时间自动启动监听，到达结束时间自动停止监听。")
+        tip_label.setWordWrap(True)
+        layout.addWidget(tip_label)
+
+        button_box = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
+            parent=dialog
+        )
+        clear_btn = button_box.addButton("清除任务", QtWidgets.QDialogButtonBox.ResetRole)
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        clear_btn.clicked.connect(lambda: dialog.done(2))
+        layout.addWidget(button_box)
+
+        result = dialog.exec_()
+        if result == 2:
+            self.clear_schedule_task(show_message=True)
+            return
+        if result != QtWidgets.QDialog.Accepted:
+            return
+
+        start_time = start_edit.dateTime().toPyDateTime()
+        end_time = end_edit.dateTime().toPyDateTime()
+        now = datetime.datetime.now()
+
+        if start_time <= now:
+            QtWidgets.QMessageBox.warning(None, "提示", "开始时间必须晚于当前时间")
+            return
+        if end_time <= start_time:
+            QtWidgets.QMessageBox.warning(None, "提示", "结束时间必须晚于开始时间")
+            return
+
+        self.set_schedule_task(start_time, end_time)
+
+    def check_schedule_task(self):
+        if not self.schedule_start_time or not self.schedule_end_time:
+            return
+
+        now = datetime.datetime.now()
+
+        if not self.schedule_start_triggered and now >= self.schedule_start_time:
+            self.schedule_start_triggered = True
+            if self.is_active:
+                self.add_message_signal.emit("定时任务开始时间已到，当前已在监听中", 0)
+            else:
+                status, _ = self.check_login()
+                if not status:
+                    rtn = self.show_login(rtn_message="定时任务开始前请先登录")
+                    if not rtn:
+                        self.add_message_signal.emit("定时任务启动失败：登录取消或失败，已取消本次定时任务", 0)
+                        self.clear_schedule_task()
+                        return
+                self.active()
+                self.add_message_signal.emit("定时任务开始时间已到，已自动开始监听", 0)
+
+        if now >= self.schedule_end_time:
+            if self.is_active:
+                self.deactive()
+                self.add_message_signal.emit("定时任务结束时间已到，已自动停止监听", 0)
+            else:
+                self.add_message_signal.emit("定时任务结束时间已到，本次定时任务已结束", 0)
+            self.clear_schedule_task()
+
     def active_clicked(self):
         # 启动按钮被点击
         if self.is_active:
@@ -424,6 +583,8 @@ class MainWindow_Ui(QtCore.QObject):
 
     def active(self):
         # 启动
+        if self.is_active:
+            return
         self.monitor_t = threading.Thread(target=monitor,args=(self,),daemon=True)
         self.monitor_t.start()
         self.is_active = True

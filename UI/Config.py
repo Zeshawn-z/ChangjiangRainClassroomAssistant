@@ -184,12 +184,19 @@ class Config_Ui(object):
         self.llm_base_url.setObjectName("llm_base_url")
         self.verticalLayout_llm.addWidget(self.llm_base_url)
         
-        self.llm_model_label = QtWidgets.QLabel(self.llm_config_group)
-        self.llm_model_label.setObjectName("llm_model_label")
-        self.verticalLayout_llm.addWidget(self.llm_model_label)
-        self.llm_model = QtWidgets.QLineEdit(self.llm_config_group)
-        self.llm_model.setObjectName("llm_model")
-        self.verticalLayout_llm.addWidget(self.llm_model)
+        self.llm_thinking_model_label = QtWidgets.QLabel(self.llm_config_group)
+        self.llm_thinking_model_label.setObjectName("llm_thinking_model_label")
+        self.verticalLayout_llm.addWidget(self.llm_thinking_model_label)
+        self.llm_thinking_model = QtWidgets.QLineEdit(self.llm_config_group)
+        self.llm_thinking_model.setObjectName("llm_thinking_model")
+        self.verticalLayout_llm.addWidget(self.llm_thinking_model)
+
+        self.llm_vl_model_label = QtWidgets.QLabel(self.llm_config_group)
+        self.llm_vl_model_label.setObjectName("llm_vl_model_label")
+        self.verticalLayout_llm.addWidget(self.llm_vl_model_label)
+        self.llm_vl_model = QtWidgets.QLineEdit(self.llm_config_group)
+        self.llm_vl_model.setObjectName("llm_vl_model")
+        self.verticalLayout_llm.addWidget(self.llm_vl_model)
 
         self.llm_answer_timeout_label = QtWidgets.QLabel(self.llm_config_group)
         self.llm_answer_timeout_label.setObjectName("llm_answer_timeout_label")
@@ -208,6 +215,11 @@ class Config_Ui(object):
         self.llm_test_timeout.setValue(15)
         self.llm_test_timeout.setObjectName("llm_test_timeout")
         self.verticalLayout_llm.addWidget(self.llm_test_timeout)
+
+        self.llm_save_log = QtWidgets.QCheckBox(self.llm_config_group)
+        self.llm_save_log.setObjectName("llm_save_log")
+        self.llm_save_log.setChecked(True)
+        self.verticalLayout_llm.addWidget(self.llm_save_log)
 
         self.test_llm_btn = QtWidgets.QPushButton(self.llm_config_group)
         self.test_llm_btn.setObjectName("test_llm_btn")
@@ -315,9 +327,14 @@ class Config_Ui(object):
         llm_cfg = config.get("llm_config", {})
         self.llm_api_key.setText(llm_cfg.get("api_key", ""))
         self.llm_base_url.setText(llm_cfg.get("base_url", "https://api.openai.com"))
-        self.llm_model.setText(llm_cfg.get("model", "gpt-3.5-turbo"))
+        default_model = llm_cfg.get("model", "gpt-4o-mini")
+        thinking_model = llm_cfg.get("thinking_model", default_model)
+        vl_model = llm_cfg.get("vl_model", thinking_model)
+        self.llm_thinking_model.setText(thinking_model)
+        self.llm_vl_model.setText(vl_model)
         self.llm_answer_timeout.setValue(int(llm_cfg.get("answer_timeout", 120)))
         self.llm_test_timeout.setValue(int(llm_cfg.get("test_timeout", 15)))
+        self.llm_save_log.setChecked(bool(llm_cfg.get("save_log", True)))
         
         self.auto_save_ppt.setChecked(config.get("auto_save_ppt", False))
         self.enable_devtools.setChecked(config.get("enable_devtools", False))
@@ -350,11 +367,20 @@ class Config_Ui(object):
         # LLM配置
         if "llm_config" not in config:
             config["llm_config"] = {}
+        thinking_model = self.llm_thinking_model.text().strip()
+        vl_model = self.llm_vl_model.text().strip()
+        if not thinking_model:
+            thinking_model = "gpt-4o-mini"
+        if not vl_model:
+            vl_model = thinking_model
         config["llm_config"]["api_key"] = self.llm_api_key.text()
         config["llm_config"]["base_url"] = self.llm_base_url.text()
-        config["llm_config"]["model"] = self.llm_model.text()
+        config["llm_config"]["model"] = thinking_model
+        config["llm_config"]["thinking_model"] = thinking_model
+        config["llm_config"]["vl_model"] = vl_model
         config["llm_config"]["answer_timeout"] = self.llm_answer_timeout.value()
         config["llm_config"]["test_timeout"] = self.llm_test_timeout.value()
+        config["llm_config"]["save_log"] = self.llm_save_log.isChecked()
         
         config["auto_save_ppt"] = self.auto_save_ppt.isChecked()
         config["enable_devtools"] = self.enable_devtools.isChecked()
@@ -372,21 +398,41 @@ class Config_Ui(object):
             
         api_key = self.llm_api_key.text().strip()
         base_url = self.llm_base_url.text().strip()
-        model = self.llm_model.text().strip()
+        thinking_model = self.llm_thinking_model.text().strip()
+        vl_model = self.llm_vl_model.text().strip()
         answer_timeout = self.llm_answer_timeout.value()
         test_timeout = self.llm_test_timeout.value()
         
         if not api_key:
             QtWidgets.QMessageBox.warning(None, "提示", "请输入 API Key")
             return
+
+        if not thinking_model:
+            QtWidgets.QMessageBox.warning(None, "提示", "请输入 Thinking 模型")
+            return
+        if not vl_model:
+            vl_model = thinking_model
             
         try:
-            handler = LLMHandler(api_key, base_url, model, answer_timeout=answer_timeout, test_timeout=test_timeout)
-            success, msg = handler.test_connection()
-            if success:
-                QtWidgets.QMessageBox.information(None, "测试成功", msg)
+            handler = LLMHandler(
+                api_key=api_key,
+                base_url=base_url,
+                thinking_model=thinking_model,
+                vl_model=vl_model,
+                answer_timeout=answer_timeout,
+                test_timeout=test_timeout,
+                save_log=False,
+            )
+            think_ok, think_msg = handler.test_connection(model=thinking_model)
+            if vl_model == thinking_model:
+                vl_ok, vl_msg = think_ok, "与 Thinking 模型相同，复用同一连接测试结果"
             else:
-                QtWidgets.QMessageBox.warning(None, "测试失败", msg)
+                vl_ok, vl_msg = handler.test_connection(model=vl_model)
+
+            if think_ok and vl_ok:
+                QtWidgets.QMessageBox.information(None, "测试成功", f"Thinking模型: {think_msg}\nVL模型: {vl_msg}")
+            else:
+                QtWidgets.QMessageBox.warning(None, "测试失败", f"Thinking模型: {think_msg}\nVL模型: {vl_msg}")
         except Exception as e:
             QtWidgets.QMessageBox.critical(None, "错误", f"发生异常: {str(e)}")
 
@@ -416,9 +462,11 @@ class Config_Ui(object):
         self.llm_config_group.setTitle(_translate("Dialog", "LLM 配置"))
         self.llm_api_key_label.setText(_translate("Dialog", "API Key (如 sk-...)"))
         self.llm_base_url_label.setText(_translate("Dialog", "Base URL (如 https://api.siliconflow.cn/v1)"))
-        self.llm_model_label.setText(_translate("Dialog", "Model (如 Qwen/Qwen3-VL-235B-A22B-Instruct)"))
+        self.llm_thinking_model_label.setText(_translate("Dialog", "Thinking Model (默认主解题模型)"))
+        self.llm_vl_model_label.setText(_translate("Dialog", "VL Model (图像题回退模型)"))
         self.llm_answer_timeout_label.setText(_translate("Dialog", "答题请求超时（秒，建议深度模型 >=120）"))
         self.llm_test_timeout_label.setText(_translate("Dialog", "连接测试读取超时（秒）"))
+        self.llm_save_log.setText(_translate("Dialog", "保存 LLM 调用日志（logs/llm_*.jsonl）"))
         self.test_llm_btn.setText(_translate("Dialog", "测试 LLM 连接"))
         
         self.other_config_group.setTitle(_translate("Dialog", "其他配置"))

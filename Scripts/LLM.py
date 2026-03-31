@@ -1,189 +1,369 @@
-import requests
 import json
+import os
 import re
+import threading
+import time
+
+import requests
 
 FALLBACK_TO_PPT_MARKER = "__NEED_PPT_IMAGE__"
 
+
 class LLMHandler:
-    def __init__(self, api_key, base_url, model="gpt-3.5-turbo", answer_timeout=120, connect_timeout=10, test_timeout=15):
+    def __init__(
+        self,
+        api_key,
+        base_url,
+        model="",
+        thinking_model="",
+        vl_model="",
+        answer_timeout=120,
+        connect_timeout=10,
+        test_timeout=15,
+        save_log=True,
+        **kwargs,
+    ):
         self.api_key = api_key
-        # Ensure base_url ends with v1 if not present, commonly required for OpenAI compatible APIs
         if not base_url.endswith("/v1"):
             self.base_url = base_url.rstrip("/") + "/v1"
         else:
             self.base_url = base_url
-        self.model = model
+
+        legacy_model = (model or "").strip()
+        self.thinking_model = (thinking_model or legacy_model or "gpt-4o-mini").strip()
+        self.vl_model = (vl_model or self.thinking_model).strip()
+
         self.answer_timeout = max(10, int(answer_timeout))
         self.connect_timeout = max(3, int(connect_timeout))
         self.test_timeout = max(5, int(test_timeout))
+        self.save_log = bool(save_log)
+        self.extra_config = kwargs or {}
 
-    def _request_completion(self, messages):
+        self._log_lock = threading.Lock()
+        self._log_file = ""
+        if self.save_log:
+            self._init_log_file()
+
+    def _init_log_file(self):
+        try:
+            log_dir = os.path.join(os.getcwd(), "logs")
+            os.makedirs(log_dir, exist_ok=True)
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            self._log_file = os.path.join(log_dir, f"llm_{ts}.jsonl")
+        except Exception:
+            self._log_file = ""
+
+    def _write_log(self, event_type, payload):
+        if not self.save_log or not self._log_file:
+            return
+        entry = {
+            "timestamp": time.time(),
+            "readable_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "event": event_type,
+            "payload": payload,
+        }
+        with self._log_lock:
+            try:
+                with open(self._log_file, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+
+    def _request_completion(self, messages, model_name, is_thinking=False):
         headers = {
             "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
 
         data = {
-            "model": self.model,
-            "messages": messages
+            "model": model_name,
+            "messages": messages,
+            "response_format": {"type": "json_object"},
+            "temperature": 0.2,
         }
+
+        if is_thinking:
+            data["temperature"] = 0.1
+
+        self._write_log(
+            "llm_request",
+            {
+                "model": model_name,
+                "is_thinking": is_thinking,
+                "messages": messages,
+            },
+        )
 
         response = requests.post(
             f"{self.base_url}/chat/completions",
             headers=headers,
             json=data,
-            timeout=(self.connect_timeout, self.answer_timeout)
+            timeout=(self.connect_timeout, self.answer_timeout),
         )
+
+        if response.status_code == 400 and "response_format" in str(response.text).lower():
+            # Some OpenAI-compatible providers do not support response_format=json_object.
+            self._write_log(
+                "llm_retry_without_response_format",
+                {
+                    "model": model_name,
+                    "is_thinking": is_thinking,
+                    "response": response.text,
+                },
+            )
+            data.pop("response_format", None)
+            response = requests.post(
+                f"{self.base_url}/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=(self.connect_timeout, self.answer_timeout),
+            )
+
         response.raise_for_status()
         res_json = response.json()
-        return res_json["choices"][0]["message"]["content"]
+        content = res_json["choices"][0]["message"].get("content", "")
 
-    def _parse_answer_list(self, content):
-        # Extract JSON list from content
-        match = re.search(r"\[.*?\]", content, re.DOTALL)
-        if match:
-            try:
-                answer_list = json.loads(match.group(0))
-                return [str(x) for x in answer_list]
-            except Exception:
-                pass
+        self._write_log(
+            "llm_response",
+            {
+                "model": model_name,
+                "is_thinking": is_thinking,
+                "response": res_json,
+                "content": content,
+            },
+        )
+        return content
 
-        text = content.strip()
-        if text:
-            return [text]
+    def _strip_thinking_trace(self, text):
+        if not isinstance(text, str):
+            return ""
+        # Remove explicit think/reasoning blocks that some models output.
+        cleaned = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE)
+        return cleaned.strip()
+
+    def _extract_json_object(self, text):
+        if not isinstance(text, str):
+            return None
+
+        text = self._strip_thinking_trace(text)
+        try:
+            obj = json.loads(text)
+            if isinstance(obj, dict):
+                return obj
+        except Exception:
+            pass
+
+        match = re.search(r"\{[\s\S]*\}", text)
+        if not match:
+            return None
+
+        try:
+            obj = json.loads(match.group(0))
+            if isinstance(obj, dict):
+                return obj
+        except Exception:
+            return None
+        return None
+
+    def _normalize_answers(self, value):
+        if isinstance(value, list):
+            rtn = []
+            for item in value:
+                s = str(item).strip()
+                if s:
+                    rtn.append(s)
+            return rtn
+        if isinstance(value, str):
+            s = value.strip()
+            return [s] if s else []
         return []
 
-    def get_answer(self, problem_data, fallback_images=None):
-        """
-        Get answer from LLM for the given problem.
-        problem_data: structure from problem_cache
-        Returns: list of answers (e.g. ["A"], ["A", "C"], ["answer text"])
-        """
-        content_obj = problem_data.get("content", {})
+    def _build_thinking_messages(self, question_text, options, image_urls):
+        options_text = ""
+        if options:
+            lines = []
+            for opt in options:
+                if isinstance(opt, dict):
+                    lines.append(f"{opt.get('key', '')}: {opt.get('value', '')}")
+            if lines:
+                options_text = "\n".join(lines)
+
+        system_prompt = (
+            "You are a strict exam-solving assistant. "
+            "Output must be JSON object only, no markdown, no extra text."
+        )
+
+        user_prompt = (
+            "Solve the question with available text/context.\n"
+            f"Question: {question_text}\n"
+            f"Options:\n{options_text}\n\n"
+            "If image information is required but missing, return exactly:\n"
+            "{\"status\":\"need_image\",\"marker\":\"__NEED_PPT_IMAGE__\",\"answers\":[]}\n"
+            "Otherwise return:\n"
+            "{\"status\":\"ok\",\"answers\":[\"...\"],\"reason\":\"short\"}"
+        )
+
+        # Thinking model only consumes text and decides whether image is required.
+        content = [{"type": "text", "text": user_prompt}]
+
+        return [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": content},
+        ]
+
+    def _build_vl_messages(self, question_text, options, image_urls):
+        options_text = ""
+        if options:
+            lines = []
+            for opt in options:
+                if isinstance(opt, dict):
+                    lines.append(f"{opt.get('key', '')}: {opt.get('value', '')}")
+            if lines:
+                options_text = "\n".join(lines)
+
+        system_prompt = (
+            "You are a strict vision-language exam solver. "
+            "Output must be JSON object only, no markdown, no extra text."
+        )
+
+        user_prompt = (
+            "Use the provided PPT images to solve the same question.\n"
+            f"Question: {question_text}\n"
+            f"Options:\n{options_text}\n\n"
+            "Return strictly:\n"
+            "{\"status\":\"ok\",\"answers\":[\"...\"],\"reason\":\"short\"}"
+        )
+
+        content = [{"type": "text", "text": user_prompt}]
+        for img in image_urls:
+            if isinstance(img, str) and img.startswith("http"):
+                content.append({"type": "image_url", "image_url": {"url": img}})
+
+        return [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": content},
+        ]
+
+    def _build_question_text(self, problem_data):
+        content_obj = problem_data.get("content", {}) if isinstance(problem_data, dict) else {}
         text_content = ""
         image_urls = []
 
         if isinstance(content_obj, dict):
-            text_content = content_obj.get("text", "")
-            # Try to find images in content, assuming 'images' list or similar structure
+            text_content = str(content_obj.get("text", "")).strip()
             if "images" in content_obj and isinstance(content_obj["images"], list):
                 image_urls.extend([img for img in content_obj["images"] if isinstance(img, str)])
-            elif "img" in content_obj and isinstance(content_obj["img"], str):
-                 image_urls.append(content_obj["img"])
+            elif isinstance(content_obj.get("img"), str):
+                image_urls.append(content_obj["img"])
         elif isinstance(content_obj, str):
-             text_content = content_obj
+            text_content = content_obj.strip()
 
-        # Many Rain Classroom problems store plain question text in "body".
-        if not text_content:
-            text_content = str(problem_data.get("body", ""))
-        
-        # Check for cover image or other image fields in problem_data
-        if problem_data.get("cover"):
-             image_urls.append(problem_data["cover"])
+        if not text_content and isinstance(problem_data, dict):
+            text_content = str(problem_data.get("body", "")).strip()
 
-        options = problem_data.get("options", [])
-        
-        prompt_text = f"Question: {text_content}\n"
-        
-        if options:
-            prompt_text += "Options:\n"
-            for opt in options:
-                key = opt.get("key", "")
-                val = opt.get("value", "")
-                prompt_text += f"{key}: {val}\n"
-        
-        prompt_text += (
-            "\nProvide the answer. If it is a multiple choice question, return only the option letters "
-            "(e.g. A, B). If it is a fill-in-the-blank question, return the blank text. "
-            "Return the answer in JSON format as a list of strings, e.g. [\"A\"] or [\"Answer\"]."
-            "\nIf the current question text/images are insufficient to solve, output exactly: "
-            f"{FALLBACK_TO_PPT_MARKER}"
-        )
+        if isinstance(problem_data, dict) and isinstance(problem_data.get("cover"), str):
+            image_urls.append(problem_data["cover"])
 
-        messages = [
-            {"role": "system", "content": "You are a helpful assistant that answers examination questions."}
-        ]
+        options = problem_data.get("options", []) if isinstance(problem_data, dict) else []
+        return text_content, options, image_urls
 
-        user_content = []
-        if text_content or options:
-             user_content.append({"type": "text", "text": prompt_text})
-        
-        for img_url in image_urls:
-            # simple validation
-            if img_url.startswith("http"):
-                user_content.append({
-                    "type": "image_url", 
-                    "image_url": {"url": img_url}
-                })
-        
-        if not user_content:
-             # Fallback if empty
-             user_content.append({"type": "text", "text": "Please solve this problem."})
+    def get_answer(self, problem_data, fallback_images=None):
+        question_text, options, image_urls = self._build_question_text(problem_data)
 
-        messages.append({"role": "user", "content": user_content})
-
+        # 第一阶段：默认走 thinking 模型
+        thinking_messages = self._build_thinking_messages(question_text, options, image_urls)
         try:
-            content = self._request_completion(messages)
-
-            if FALLBACK_TO_PPT_MARKER in str(content):
-                ppt_images = []
-                if isinstance(fallback_images, list):
-                    for url in fallback_images:
-                        if isinstance(url, str) and url.startswith("http") and url not in ppt_images:
-                            ppt_images.append(url)
-
-                if not ppt_images:
-                    return []
-
-                fallback_user_content = [{
-                    "type": "text",
-                    "text": (
-                        "Use these PPT images to solve the same question. "
-                        "Return JSON list of strings only."
-                    )
-                }]
-                for img_url in ppt_images:
-                    fallback_user_content.append({
-                        "type": "image_url",
-                        "image_url": {"url": img_url}
-                    })
-
-                fallback_messages = [
-                    {"role": "system", "content": "You are a helpful assistant that answers examination questions."},
-                    {"role": "user", "content": fallback_user_content}
-                ]
-                content = self._request_completion(fallback_messages)
-
-            if FALLBACK_TO_PPT_MARKER in str(content):
-                return []
-
-            return self._parse_answer_list(content)
-            
+            thinking_content = self._request_completion(
+                messages=thinking_messages,
+                model_name=self.thinking_model,
+                is_thinking=True,
+            )
         except Exception as e:
-            print(f"[LLM Error] {e}")
+            self._write_log("llm_error", {"stage": "thinking", "error": str(e)})
             return []
 
-    def test_connection(self):
+        obj = self._extract_json_object(thinking_content)
+        if not isinstance(obj, dict):
+            self._write_log("llm_parse_error", {"stage": "thinking", "content": thinking_content})
+            return []
+
+        status = str(obj.get("status", "")).strip().lower()
+        marker = str(obj.get("marker", "")).strip()
+        answers = self._normalize_answers(obj.get("answers", []))
+
+        if status == "ok" and answers:
+            return answers
+
+        need_image = status == "need_image" or marker == FALLBACK_TO_PPT_MARKER
+        if not need_image:
+            return answers
+
+        # 第二阶段：仅在明确需要图片时回退到 VL
+        ppt_images = []
+        if isinstance(fallback_images, list):
+            for url in fallback_images:
+                if isinstance(url, str) and url.startswith("http") and url not in ppt_images:
+                    ppt_images.append(url)
+
+        # Only send the current-page preferred image to reduce visual noise.
+        if ppt_images:
+            ppt_images = [ppt_images[0]]
+
+        if not ppt_images:
+            self._write_log("llm_need_image_but_no_ppt", {"question": question_text})
+            return []
+
+        vl_messages = self._build_vl_messages(question_text, options, ppt_images)
+        try:
+            vl_content = self._request_completion(
+                messages=vl_messages,
+                model_name=self.vl_model,
+                is_thinking=False,
+            )
+        except Exception as e:
+            self._write_log("llm_error", {"stage": "vl", "error": str(e)})
+            return []
+
+        vl_obj = self._extract_json_object(vl_content)
+        if not isinstance(vl_obj, dict):
+            self._write_log("llm_parse_error", {"stage": "vl", "content": vl_content})
+            return []
+
+        vl_status = str(vl_obj.get("status", "")).strip().lower()
+        vl_answers = self._normalize_answers(vl_obj.get("answers", []))
+        if vl_status == "ok" and vl_answers:
+            return vl_answers
+        return vl_answers
+
+    def test_connection(self, model=""):
         """
         Test the connection to the LLM API.
         Returns: (bool, message)
         """
         headers = {
             "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
+        target_model = (model or self.thinking_model).strip()
         try:
-            # Use /models for quick connectivity check to avoid slow reasoning model blocking.
             response = requests.get(
                 f"{self.base_url}/models",
                 headers=headers,
-                timeout=(self.connect_timeout, self.test_timeout)
+                timeout=(self.connect_timeout, self.test_timeout),
             )
             if response.status_code == 200:
-                return True, "连接成功！"
-            elif response.status_code in (401, 403):
+                # 尝试校验目标模型是否存在（部分兼容网关可能不返回完整列表）
+                msg = f"连接成功（模型: {target_model}）"
+                try:
+                    payload = response.json()
+                    model_ids = [str(item.get("id", "")) for item in payload.get("data", []) if isinstance(item, dict)]
+                    if model_ids and target_model not in model_ids:
+                        msg += "；注意：/models 列表中未发现该模型，请确认网关映射"
+                except Exception:
+                    pass
+                return True, msg
+            if response.status_code in (401, 403):
                 return False, "连接失败: API Key 无效或无权限"
-            else:
-                return False, f"连接失败: HTTP {response.status_code} {response.text}"
+            return False, f"连接失败: HTTP {response.status_code} {response.text}"
         except Exception as e:
             return False, f"连接异常: {str(e)}"

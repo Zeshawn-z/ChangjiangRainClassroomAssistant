@@ -125,11 +125,14 @@ def get_initial_data():
         },
         "llm_config": {
             "api_key": "",
-            "base_url": "https://api.openai.com",
-            "model": "gpt-3.5-turbo",
+            "base_url": "https://api.siliconflow.cn/v1",
+            "model": "Qwen/Qwen3-VL-235B-A22B-Thinking",
+            "thinking_model": "Qwen/Qwen3-VL-235B-A22B-Thinking",
+            "vl_model": "Qwen/Qwen3-VL-235B-A22B-Thinking",
             "answer_timeout": 120,
             "connect_timeout": 10,
-            "test_timeout": 15
+            "test_timeout": 15,
+            "save_log": True
         },
         "auto_save_ppt": False,
         "enable_devtools": False,

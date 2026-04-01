@@ -165,6 +165,11 @@ class LessonPPTMixin:
 
                 self.problem_cache[problem_id] = problem
                 self._upsert_problem_store(problem_id, problem)
+                if hasattr(self.main_ui, "on_problem_snapshot"):
+                    try:
+                        self.main_ui.on_problem_snapshot(self.lessonid, self.lessonname, problem_id, problem)
+                    except Exception:
+                        pass
                 self._notify_problem_result(problem_id, problem.get("result"))
                 if self._is_problem_answered(problem_id):
                     self._log_debug(f"题目 {problem_id} 已作答，记录状态")

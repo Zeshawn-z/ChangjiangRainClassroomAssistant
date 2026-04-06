@@ -170,7 +170,12 @@ class LessonWSMixin:
         title = rtn["title"]
         timestamp = rtn["startTime"] // 1000
         time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
-        index = self.main_ui.tableWidget.rowCount()
+        if hasattr(self.main_ui, "get_course_row_count"):
+            index = self.main_ui.get_course_row_count()
+        elif hasattr(self.main_ui, "tableWidget"):
+            index = self.main_ui.tableWidget.rowCount()
+        else:
+            index = 0
         self.add_course([self.lessonname, title, teacher, time_str], index)
         ws_url = build_server_url("/wsapp/", self.config, ws=True)
         self.wsapp = websocket.WebSocketApp(url=ws_url, header=self.headers, on_open=self.on_open, on_message=self.on_message)

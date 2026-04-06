@@ -30,6 +30,83 @@
 - Windows 10/11
 - Python 3.10 及以上
 
+## 后台版（跨平台，新增）
+
+当前分支新增了无 Qt 的后台运行模式，支持：
+
+- 多用户并行监听
+- 周课表自动启停（按周循环）
+- WebUI 管理用户、配置、登录态、监听状态
+- Web 扫码登录与终端二维码扫码登录
+- 题目与 PPT 预览（WebUI）
+
+### 启动方式
+
+1. 安装依赖
+
+  pip install -r requirements.txt
+
+2. 启动后台 + WebUI
+
+  python RainClassroomAssistantLinux.py serve --host 0.0.0.0 --port 18080
+
+3. 浏览器访问
+
+  http://127.0.0.1:18080
+
+### WebUI 前端开发（Vite + Vue3）
+
+前端源码位于 WebUI-vite，使用 Vite 管理：
+
+1. 安装前端依赖
+
+  cd WebUI-vite
+  npm install
+
+2. 本地开发（热更新）
+
+  npm run dev
+
+默认开发地址为 http://127.0.0.1:5173，已代理 /api 到 http://127.0.0.1:18080。
+
+3. 构建发布版本
+
+  npm run build
+
+构建产物会输出到 WebUI/dist，后端启动时仅托管该目录（已移除旧单文件 UI 回退）。
+
+### 常用命令
+
+- 创建用户
+
+  python RainClassroomAssistantLinux.py add-user --name "张三" --server changjiang
+
+- 查看用户
+
+  python RainClassroomAssistantLinux.py list-users
+
+- 终端扫码登录（会输出二维码）
+
+  python RainClassroomAssistantLinux.py terminal-login --user <user_id> --timeout 240
+
+- 查看某个用户最近日志（监听状态/启停事件/运行消息）
+
+  python RainClassroomAssistantLinux.py logs --user <user_id> --limit 120
+
+- 仅查看监听状态类日志（消息类型 7）
+
+  python RainClassroomAssistantLinux.py logs --user <user_id> --types 7 --limit 200
+
+### 周课表说明
+
+WebUI 中每个用户可配置多条时间段规则：
+
+- weekday: 0-6 分别表示周一到周日
+- start/end: HH:MM 格式
+- enabled: 是否启用该条规则
+
+系统会按规则循环判断并自动开始/停止监听。支持跨天时段（例如 23:00-01:00）。
+
 ## 本地运行
 
 1. 安装依赖

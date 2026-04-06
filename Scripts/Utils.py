@@ -6,6 +6,7 @@ import requests
 import random
 import os
 import sys
+from pathlib import Path
 
 lock = threading.Lock()
 
@@ -142,14 +143,36 @@ def get_initial_data():
 
 def get_config_path():
     # 获取配置文件路径
-    config_route = get_config_dir() + "\\config.json"
-    return config_route
+    return os.path.join(get_config_dir(), "config.json")
 
 def get_config_dir():
-    # 获取配置文件所在文件夹
-    appdata_route = os.environ['APPDATA']
-    dir_route = appdata_route + "\\RainClassroomAssistant"
-    return dir_route
+    # 获取配置文件所在文件夹（跨平台）
+    return get_runtime_data_dir()
+
+
+def get_runtime_data_dir():
+    app_name = "RainClassroomAssistant"
+    if os.name == "nt":
+        base_dir = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+    else:
+        base_dir = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return os.path.join(base_dir, app_name)
+
+
+def ensure_runtime_data_dir():
+    path = get_runtime_data_dir()
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def get_users_state_path():
+    return os.path.join(ensure_runtime_data_dir(), "users_state.json")
+
+
+def get_users_logs_dir():
+    path = os.path.join(ensure_runtime_data_dir(), "user_logs")
+    os.makedirs(path, exist_ok=True)
+    return path
 
 def get_user_info(sessionid, config=None):
     # 获取用户信息

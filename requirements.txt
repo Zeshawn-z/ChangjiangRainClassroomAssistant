@@ -1,21 +1,21 @@
 altgraph
 certifi
 charset-normalizer
-comtypes
+comtypes; platform_system == "Windows"
 Flask
 idna
 packaging
-pefile
+pefile; platform_system == "Windows"
 Pillow
 pyinstaller
 pyinstaller-hooks-contrib
-pypiwin32
-PyQt5
-PyQt5-Qt5
-PyQt5_sip
+pypiwin32; platform_system == "Windows"
+PyQt5; platform_system == "Windows"
+PyQt5-Qt5; platform_system == "Windows"
+PyQt5_sip; platform_system == "Windows"
 pyttsx3
-pywin32
-pywin32-ctypes
+pywin32; platform_system == "Windows"
+pywin32-ctypes; platform_system == "Windows"
 requests
 setuptools
 six

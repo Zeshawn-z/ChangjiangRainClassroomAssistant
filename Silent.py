@@ -272,6 +272,7 @@ def run_terminal_login(user_id, timeout_seconds):
 def main():
     parser = argparse.ArgumentParser(description="RainClassroomAssistant Linux/Web 后台服务")
     subparsers = parser.add_subparsers(dest="command")
+    parser.set_defaults(command="serve", host="127.0.0.1", port=18080)
 
     serve_parser = subparsers.add_parser("serve", help="启动 WebUI 与后台调度")
     serve_parser.add_argument("--host", default="127.0.0.1")
@@ -295,7 +296,7 @@ def main():
     login_parser.add_argument("--timeout", type=int, default=240)
 
     args = parser.parse_args()
-    command = args.command or "serve"
+    command = args.command
 
     if command == "add-user":
         user = service.create_user(name=args.name, server=args.server)

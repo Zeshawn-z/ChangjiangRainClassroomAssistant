@@ -11,3 +11,4 @@ problems
 logs
 logs.txt
 WebUI-vite/node_modules
+WebUI-vite/.vite

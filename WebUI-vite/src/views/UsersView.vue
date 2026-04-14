@@ -82,6 +82,8 @@ const ui = reactive({
   logsStateOnly: false,
   logsLoading: false,
   runtimeLoading: false,
+  scheduleDirty: false,
+  bindingFromUser: false,
 });
 
 function normalizeHm(value) {
@@ -165,19 +167,25 @@ function syncSelectedUser() {
   }
 }
 
-function bindFromUser(user) {
+function bindFromUser(user, options = {}) {
+  const forceSchedule = !!options.forceSchedule;
   if (!user) {
     ui.runtime = buildEmptyRuntime();
     ui.pptImageVersion = Date.now();
     ui.logs = [];
     return;
   }
+  ui.bindingFromUser = true;
   ui.profile.name = user.name || "";
   ui.profile.server = user.server || store.state.servers?.[0]?.key || "changjiang";
   ui.profile.enabled = !!user.enabled;
   ui.profile.auto_schedule = !!user.auto_schedule;
   ui.sessionidInput = "";
-  ui.scheduleDraft = JSON.parse(JSON.stringify(user.schedule || []));
+  if (forceSchedule || !ui.scheduleDirty) {
+    ui.scheduleDraft = JSON.parse(JSON.stringify(user.schedule || []));
+    ui.scheduleDirty = false;
+  }
+  ui.bindingFromUser = false;
 }
 
 watch(
@@ -191,11 +199,29 @@ watch(
 watch(
   () => ui.selectedUserId,
   () => {
-    bindFromUser(selectedUser.value);
+    bindFromUser(selectedUser.value, { forceSchedule: true });
     refreshLoginState();
     refreshRuntime();
     refreshLogs();
   }
+);
+
+watch(
+  () => selectedUser.value,
+  (user) => {
+    if (!user || user.id !== ui.selectedUserId) return;
+    bindFromUser(user);
+  },
+  { deep: true }
+);
+
+watch(
+  () => ui.scheduleDraft,
+  () => {
+    if (ui.bindingFromUser) return;
+    ui.scheduleDirty = true;
+  },
+  { deep: true }
 );
 
 watch(
@@ -259,7 +285,11 @@ async function refreshLogs() {
       keyword: ui.logsKeyword.trim(),
       types: ui.logsStateOnly ? "7" : "",
     });
-    ui.logs = (data.logs || []).slice().reverse().map((row) => ({ ...row, _key: buildLogKey(row) }));
+    ui.logs = (data.logs || [])
+      .filter((row) => !["session_state", "system_event"].includes(row?.event))
+      .slice()
+      .reverse()
+      .map((row) => ({ ...row, _key: buildLogKey(row) }));
   } catch {
     ui.logs = [];
   } finally {
@@ -385,6 +415,7 @@ async function saveSchedule() {
 
   ui.scheduleDraft = normalized;
   await store.updateSchedule(selectedUser.value.id, normalized);
+  bindFromUser(selectedUser.value, { forceSchedule: true });
   ElMessage.success("课表已保存");
 }
 

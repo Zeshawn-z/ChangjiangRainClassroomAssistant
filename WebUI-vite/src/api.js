@@ -15,6 +15,20 @@ export const api = {
   requestJson,
   getMeta: () => requestJson("/api/meta"),
   getOverview: () => requestJson("/api/system/overview"),
+  getSystemLogs: (query = {}) => {
+    const params = new URLSearchParams();
+    if (query.limit != null) {
+      params.set("limit", String(query.limit));
+    }
+    if (query.keyword) {
+      params.set("keyword", String(query.keyword));
+    }
+    if (query.events) {
+      params.set("events", String(query.events));
+    }
+    const suffix = params.toString();
+    return requestJson(`/api/system/logs${suffix ? `?${suffix}` : ""}`);
+  },
   getDefaultConfig: () => requestJson("/api/config/default"),
   updateDefaultConfig: (config) =>
     requestJson("/api/config/default", {

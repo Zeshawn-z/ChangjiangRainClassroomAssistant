@@ -56,6 +56,26 @@ def create_app():
     def api_system_overview():
         return jsonify({"ok": True, "overview": service.get_overview()})
 
+    @app.get("/api/system/logs")
+    def api_system_logs():
+        limit_raw = request.args.get("limit", "200")
+        keyword = request.args.get("keyword", "")
+        events_raw = request.args.get("events", "")
+
+        try:
+            limit = int(limit_raw)
+        except Exception:
+            limit = 200
+
+        event_names = []
+        for item in str(events_raw or "").split(","):
+            text = item.strip()
+            if text:
+                event_names.append(text)
+
+        logs = service.get_global_logs(limit=limit, event_names=event_names, keyword=keyword)
+        return jsonify({"ok": True, "logs": logs})
+
     @app.get("/api/config/default")
     def api_default_config():
         return jsonify({"ok": True, "config": service.get_default_config()})
@@ -158,12 +178,12 @@ def create_app():
     def api_set_session(user_id):
         payload = request.get_json(silent=True) or {}
         sessionid = payload.get("sessionid", "")
-        ok, msg = service.set_user_sessionid(user_id, sessionid)
+        ok, msg = service.set_user_sessionid(user_id, sessionid, source="api-set-session")
         return jsonify({"ok": ok, "message": msg, "user": service.get_user(user_id)})
 
     @app.get("/api/users/<user_id>/check-login")
     def api_check_login(user_id):
-        ok, msg = service.validate_user_login(user_id)
+        ok, msg = service.validate_user_login(user_id, source="api-check-login")
         return jsonify({"ok": ok, "message": msg})
 
     @app.post("/api/users/<user_id>/start")
@@ -178,7 +198,7 @@ def create_app():
 
     @app.post("/api/users/<user_id>/login/start")
     def api_login_start(user_id):
-        ok, msg = service.start_login(user_id)
+        ok, msg = service.start_login(user_id, source="api-login-start")
         state = service.get_login_state(user_id)
         return jsonify({"ok": ok, "message": msg, "state": state})
 
@@ -233,7 +253,7 @@ def create_app():
 
 
 def run_terminal_login(user_id, timeout_seconds):
-    ok, msg = service.start_login(user_id)
+    ok, msg = service.start_login(user_id, source="terminal-login")
     if not ok:
         print(f"启动扫码失败: {msg}")
         return 1

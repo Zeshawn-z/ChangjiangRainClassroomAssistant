@@ -19,6 +19,14 @@ YUKETANG_SERVERS = {
 DEFAULT_SERVER_KEY = "changjiang"
 
 
+class ApiResponseError(Exception):
+    pass
+
+
+class SessionExpiredError(ApiResponseError):
+    pass
+
+
 def normalize_server_key(server_key):
     key = str(server_key or DEFAULT_SERVER_KEY).strip().lower()
     if key not in YUKETANG_SERVERS:
@@ -54,6 +62,14 @@ def say_something(text):
 def dict_result(text):
     # json string 转 dict object
     return dict(json.loads(text))
+
+
+def _looks_like_session_expired(code, message):
+    text = str(message or "").lower()
+    if code in (401, 403):
+        return True
+    keywords = ["session", "login", "auth", "expired", "未登录", "登录", "失效", "过期"]
+    return any(word in text for word in keywords)
 
 def test_network():
     # 网络状态测试
@@ -174,6 +190,10 @@ def get_users_logs_dir():
     os.makedirs(path, exist_ok=True)
     return path
 
+
+def get_system_logs_path():
+    return os.path.join(ensure_runtime_data_dir(), "system_logs.jsonl")
+
 def get_user_info(sessionid, config=None):
     # 获取用户信息
     headers = {
@@ -182,7 +202,7 @@ def get_user_info(sessionid, config=None):
     }
     r = requests.get(url=build_server_url("/api/v3/user/basic-info", config),headers=headers,proxies={"http": None,"https":None})
     rtn = dict_result(r.text)
-    return (rtn["code"],rtn["data"])
+    return (rtn.get("code", -1), rtn.get("data", {}))
 
 def get_on_lesson(sessionid, config=None):
     # 获取用户当前正在上课列表
@@ -192,7 +212,18 @@ def get_on_lesson(sessionid, config=None):
     }
     r = requests.get(build_server_url("/api/v3/classroom/on-lesson", config),headers=headers,proxies={"http": None,"https":None})
     rtn = dict_result(r.text)
-    return rtn["data"]["onLessonClassrooms"]
+    code = rtn.get("code", -1)
+    message = rtn.get("msg", "")
+    if code != 0:
+        if _looks_like_session_expired(code, message):
+            raise SessionExpiredError(f"会话失效({code}): {message}")
+        raise ApiResponseError(f"获取上课列表失败({code}): {message}")
+
+    data = rtn.get("data", {})
+    on_lesson = data.get("onLessonClassrooms", []) if isinstance(data, dict) else []
+    if not isinstance(on_lesson, list):
+        return []
+    return on_lesson
 
 def get_on_lesson_old(sessionid, config=None):
     # 获取用户当前正在上课的列表（旧版）

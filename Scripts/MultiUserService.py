@@ -9,7 +9,14 @@ from collections import deque
 
 from Scripts.Monitor import monitor
 from Scripts.QRLogin import QRLoginSession
-from Scripts.Utils import get_initial_data, get_user_info, get_users_logs_dir, get_users_state_path, normalize_server_key
+from Scripts.Utils import (
+    get_initial_data,
+    get_system_logs_path,
+    get_user_info,
+    get_users_logs_dir,
+    get_users_state_path,
+    normalize_server_key,
+)
 
 
 def _bool_value(value, default=False):
@@ -42,6 +49,7 @@ class HeadlessUserContext:
         self.courses = {}
         self.current_ppt = {"image_path": "", "info_text": ""}
         self.problem_snapshots = {}
+        self.on_session_expired = None
 
         self.add_message_signal = _SignalEmitter(self._on_add_message)
         self.add_course_signal = _SignalEmitter(self._on_add_course)
@@ -155,6 +163,8 @@ class MultiUserService:
 
         self.state_path = get_users_state_path()
         self.logs_dir = get_users_logs_dir()
+        self.system_logs_path = get_system_logs_path()
+        self._system_log_lock = threading.Lock()
         self.users = {}
         self.default_config = self._sanitize_default_config(get_initial_data())
 
@@ -204,6 +214,18 @@ class MultiUserService:
         merged["sessionid"] = ""
         merged["server"] = normalize_server_key(merged.get("server"))
         return merged
+
+    @staticmethod
+    def _sanitize_config_for_frontend(config):
+        data = copy.deepcopy(config if isinstance(config, dict) else {})
+        llm = data.get("llm_config")
+        if not isinstance(llm, dict):
+            llm = {}
+            data["llm_config"] = llm
+        key = str(llm.get("api_key", "")).strip()
+        llm["api_key_configured"] = bool(key)
+        llm["api_key"] = ""
+        return data
 
     @staticmethod
     def _strip_user_bound_config(config):
@@ -390,7 +412,67 @@ class MultiUserService:
             self.contexts[user_id] = context
         else:
             context.update_config(effective_config)
+        context.on_session_expired = lambda uid=user_id: self._handle_context_session_expired(uid)
         return context
+
+    def _append_system_log_entry(self, data):
+        payload = data if isinstance(data, dict) else {}
+        line = json.dumps(payload, ensure_ascii=False)
+        with self._system_log_lock:
+            try:
+                with open(self.system_logs_path, "a", encoding="utf-8") as f:
+                    f.write(line + "\n")
+            except Exception:
+                pass
+
+    def _emit_session_event(self, user_id, status, source, detail="", level=0):
+        with self._lock:
+            user = self.users.get(user_id)
+            user_name = user.get("name", "") if isinstance(user, dict) else ""
+            has_sessionid = bool(str(user.get("sessionid", "")).strip()) if isinstance(user, dict) else False
+
+        payload = {
+            "event": "session_state",
+            "time": datetime.datetime.now().isoformat(timespec="seconds"),
+            "status": str(status or "unknown"),
+            "source": str(source or "unknown"),
+            "detail": str(detail or ""),
+            "has_sessionid": has_sessionid,
+            "user_id": str(user_id or ""),
+            "user_name": str(user_name or ""),
+            "level": int(level),
+        }
+
+        self._append_system_log_entry(payload)
+
+    def _emit_system_event(self, user_id, action, source, detail="", level=7):
+        with self._lock:
+            user = self.users.get(user_id)
+            user_name = user.get("name", "") if isinstance(user, dict) else ""
+
+        payload = {
+            "event": "system_event",
+            "time": datetime.datetime.now().isoformat(timespec="seconds"),
+            "action": str(action or "unknown"),
+            "source": str(source or "unknown"),
+            "detail": str(detail or ""),
+            "user_id": str(user_id or ""),
+            "user_name": str(user_name or ""),
+            "level": int(level),
+        }
+        self._append_system_log_entry(payload)
+
+    def _handle_context_session_expired(self, user_id):
+        self._emit_system_event(user_id, "session-expired-detected", "monitor", "监听线程检测到会话失效")
+        self._emit_session_event(user_id, "refresh-triggered", "monitor-session-expired", "检测到会话失效，准备自动扫码刷新", level=7)
+        ok, msg = self.start_login(user_id, source="monitor-session-expired")
+        with self._lock:
+            context = self.contexts.get(user_id)
+            if context:
+                if ok:
+                    context.add_message_signal.emit("检测到会话失效，已自动发起扫码刷新", 7)
+                else:
+                    context.add_message_signal.emit(f"会话失效后自动刷新失败: {msg}", 4)
 
     def _get_user_log_path(self, user_id):
         safe_user_id = str(user_id or "").strip() or "unknown"
@@ -482,7 +564,7 @@ class MultiUserService:
                 "enabled": user["enabled"],
                 "auto_schedule": user["auto_schedule"],
                 "schedule": copy.deepcopy(user.get("schedule", [])),
-                "config": self._build_effective_config_locked(user),
+                "config": self._sanitize_config_for_frontend(self._build_effective_config_locked(user)),
                 "config_overrides": copy.deepcopy(user.get("config_overrides", {})),
                 "use_custom_config": bool(user.get("use_custom_config", False)),
                 "server": user.get("server", "changjiang"),
@@ -581,6 +663,57 @@ class MultiUserService:
             rows = rows[-limit:]
         return rows
 
+    def get_global_logs(self, limit=200, event_names=None, keyword=""):
+        limit = max(1, min(int(limit or 200), 2000))
+        keyword = str(keyword or "").strip().lower()
+
+        if isinstance(event_names, (list, tuple, set)):
+            names = {str(item).strip() for item in event_names if str(item).strip()}
+            target_events = names if names else {"system_event", "session_state"}
+        else:
+            target_events = {"system_event", "session_state"}
+
+        rows = []
+        try:
+            with open(self.system_logs_path, "r", encoding="utf-8") as f:
+                lines = deque(f, maxlen=max(limit * 8, 400))
+        except Exception:
+            return []
+
+        for line in lines:
+            line = str(line).strip()
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+            except Exception:
+                continue
+
+            event_name = str(item.get("event", ""))
+            if event_name not in target_events:
+                continue
+
+            if keyword:
+                text = " ".join(
+                    [
+                        event_name,
+                        str(item.get("action", "")),
+                        str(item.get("status", "")),
+                        str(item.get("source", "")),
+                        str(item.get("detail", "")),
+                        str(item.get("user_name", "")),
+                    ]
+                ).lower()
+                if keyword not in text:
+                    continue
+
+            rows.append(item)
+
+        rows.sort(key=lambda item: str(item.get("time", "")))
+        if len(rows) > limit:
+            rows = rows[-limit:]
+        return rows
+
     def update_user_profile(self, user_id, name=None, enabled=None, auto_schedule=None, server=None):
         with self._lock:
             user = self.users.get(user_id)
@@ -643,7 +776,7 @@ class MultiUserService:
 
     def get_default_config(self):
         with self._lock:
-            return copy.deepcopy(self.default_config)
+            return self._sanitize_config_for_frontend(self.default_config)
 
     def update_default_config(self, config_patch):
         with self._lock:
@@ -670,7 +803,7 @@ class MultiUserService:
             self._save_state_locked()
         return True, "ok"
 
-    def set_user_sessionid(self, user_id, sessionid):
+    def set_user_sessionid(self, user_id, sessionid, source="manual"):
         with self._lock:
             user = self.users.get(user_id)
             if not user:
@@ -681,23 +814,34 @@ class MultiUserService:
             context = self.contexts.get(user_id)
             if context:
                 context.update_config(self._build_effective_config_locked(user))
+
+        has_sessionid = bool(str(sessionid or "").strip())
+        if has_sessionid:
+            self._emit_session_event(user_id, "session-updated", source, "session 已写入用户配置", level=0)
+        else:
+            self._emit_session_event(user_id, "session-cleared", source, "session 已清空", level=7)
         return True, "ok"
 
-    def validate_user_login(self, user_id):
+    def validate_user_login(self, user_id, source="unknown"):
         with self._lock:
             user = self.users.get(user_id)
             if not user:
                 return False, "用户不存在"
             config = self._build_effective_config_locked(user)
         sessionid = config.get("sessionid", "")
+        self._emit_session_event(user_id, "validate-start", source, "开始校验登录态", level=0)
         if not sessionid:
+            self._emit_session_event(user_id, "validate-no-session", source, "当前未配置 sessionid", level=7)
             return False, "未登录"
         try:
             code, info = get_user_info(sessionid, config)
             if code == 0:
+                self._emit_session_event(user_id, "validate-ok", source, f"登录有效: {info.get('name', '')}", level=0)
                 return True, info.get("name", "")
+            self._emit_session_event(user_id, "validate-expired", source, f"登录失效 code={code}", level=4)
             return False, "session 已失效"
         except Exception as exc:
+            self._emit_session_event(user_id, "validate-error", source, f"校验异常: {exc}", level=4)
             return False, f"登录态校验失败: {exc}"
 
     def is_user_active(self, user_id):
@@ -711,8 +855,18 @@ class MultiUserService:
             return bool(context.is_active)
 
     def start_user_monitor(self, user_id, reason="manual"):
-        ok, msg = self.validate_user_login(user_id)
+        self._emit_system_event(user_id, "monitor-start-request", f"start-monitor:{reason}", "收到启动监听请求")
+        ok, msg = self.validate_user_login(user_id, source=f"start-monitor:{reason}")
         if not ok:
+            if "失效" in str(msg) or "未登录" in str(msg):
+                self._emit_session_event(user_id, "refresh-requested", f"start-monitor:{reason}", msg, level=7)
+                login_ok, login_msg = self.start_login(user_id, source=f"start-monitor:{reason}")
+                if login_ok:
+                    self._emit_system_event(user_id, "monitor-start-blocked", f"start-monitor:{reason}", "会话无效，已触发扫码刷新")
+                    return False, f"{msg}，已自动发起扫码刷新"
+                self._emit_system_event(user_id, "monitor-start-failed", f"start-monitor:{reason}", f"会话无效且刷新失败: {login_msg}")
+                return False, f"{msg}，自动发起扫码失败: {login_msg}"
+            self._emit_system_event(user_id, "monitor-start-failed", f"start-monitor:{reason}", msg)
             return False, msg
 
         with self._lock:
@@ -721,9 +875,11 @@ class MultiUserService:
                 return False, "用户不存在"
             context = self._get_or_create_context_locked(user_id)
             if context.is_active:
+                self._emit_system_event(user_id, "monitor-already-active", f"start-monitor:{reason}", "监听已在运行")
                 return True, "监听已在运行"
             context.is_active = True
             context.add_message_signal.emit(f"开始监听，触发来源: {reason}", 7)
+            self._emit_system_event(user_id, "monitor-started", f"start-monitor:{reason}", "监听线程已启动")
 
             def run_monitor():
                 try:
@@ -738,12 +894,15 @@ class MultiUserService:
         return True, "ok"
 
     def stop_user_monitor(self, user_id, reason="manual"):
+        self._emit_system_event(user_id, "monitor-stop-request", f"stop-monitor:{reason}", "收到停止监听请求")
         with self._lock:
             context = self.contexts.get(user_id)
             thread = self.monitor_threads.get(user_id)
             if not context:
+                self._emit_system_event(user_id, "monitor-stop-noop", f"stop-monitor:{reason}", "监听未启动")
                 return True, "监听未启动"
             if not context.is_active:
+                self._emit_system_event(user_id, "monitor-stop-noop", f"stop-monitor:{reason}", "监听未启动")
                 return True, "监听未启动"
             context.add_message_signal.emit(f"收到停止请求，触发来源: {reason}", 7)
             context.is_active = False
@@ -758,10 +917,13 @@ class MultiUserService:
             if not alive:
                 self.monitor_threads.pop(user_id, None)
         if alive:
+            self._emit_system_event(user_id, "monitor-stop-timeout", f"stop-monitor:{reason}", "停止超时，线程仍在退出中")
             return False, "停止超时，线程仍在退出中"
+        self._emit_system_event(user_id, "monitor-stopped", f"stop-monitor:{reason}", "监听已停止")
         return True, "ok"
 
-    def start_login(self, user_id):
+    def start_login(self, user_id, source="manual"):
+        self._emit_system_event(user_id, "login-start-request", source, "收到扫码登录请求")
         with self._lock:
             user = self.users.get(user_id)
             if not user:
@@ -769,18 +931,27 @@ class MultiUserService:
 
             old_session = self.login_sessions.get(user_id)
             if old_session:
+                old_state = old_session.get_state()
+                if old_state.get("status") == "pending":
+                    self._emit_system_event(user_id, "login-already-pending", source, "已有扫码登录进行中")
+                    self._emit_session_event(user_id, "refresh-pending", source, "已有扫码刷新进行中", level=7)
+                    return True, "扫码已在进行中"
                 old_session.close()
 
             config = self._build_effective_config_locked(user)
 
         def on_success(sessionid):
-            self.set_user_sessionid(user_id, sessionid)
+            self.set_user_sessionid(user_id, sessionid, source=f"login-success:{source}")
+            self._emit_system_event(user_id, "login-success", source, "扫码登录成功")
+            self._emit_session_event(user_id, "refresh-success", source, "扫码刷新成功", level=0)
             with self._lock:
                 context = self.contexts.get(user_id)
                 if context:
                     context.add_message_signal.emit("扫码登录成功，session 已更新", 0)
 
         def on_error(error_message):
+            self._emit_system_event(user_id, "login-failed", source, str(error_message))
+            self._emit_session_event(user_id, "refresh-failed", source, f"扫码刷新失败: {error_message}", level=4)
             with self._lock:
                 context = self.contexts.get(user_id)
                 if context:
@@ -792,6 +963,9 @@ class MultiUserService:
         with self._lock:
             self.login_sessions[user_id] = session
 
+        self._emit_system_event(user_id, "login-started", source, "已发起扫码流程")
+        self._emit_session_event(user_id, "refresh-started", source, "已发起扫码刷新流程", level=7)
+
         return True, "ok"
 
     def cancel_login(self, user_id):
@@ -802,7 +976,9 @@ class MultiUserService:
             state = session.get_state()
             if state.get("status") == "pending":
                 state["status"] = "cancelled"
+            self._emit_system_event(user_id, "login-cancelled", "api-cancel-login", "已取消扫码登录")
             return True, state
+        self._emit_system_event(user_id, "login-cancel-noop", "api-cancel-login", "当前没有扫码登录任务")
         return True, {"status": "not_started"}
 
     def get_login_state(self, user_id):

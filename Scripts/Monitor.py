@@ -1,7 +1,7 @@
 import time
 import requests
 import threading
-from Scripts.Utils import get_on_lesson, test_network
+from Scripts.Utils import ApiResponseError, SessionExpiredError, get_on_lesson, test_network
 from Scripts.Classes import Lesson
 
 def monitor(main_ui):
@@ -16,12 +16,37 @@ def monitor(main_ui):
     # 检测到的未加入监听列表的课程
     lesson_list = []
     network_status = True
-    sessionid = main_ui.config["sessionid"]
+    def stop_all_lessons():
+        for lesson in on_lesson_list.copy():
+            lesson.wsapp.close()
+
+    def trigger_session_refresh(reason_text):
+        main_ui.add_message_signal.emit(reason_text, 4)
+        refresh_cb = getattr(main_ui, "on_session_expired", None)
+        if callable(refresh_cb):
+            try:
+                refresh_cb()
+            except Exception:
+                pass
+
     while True:
         # 获取课程列表
         try:
+            sessionid = str(main_ui.config.get("sessionid", "")).strip()
+            if not sessionid:
+                trigger_session_refresh("未检测到 sessionid，已停止监听并等待重新登录")
+                main_ui.is_active = False
+                stop_all_lessons()
+                return
             lesson_list = get_on_lesson(sessionid, main_ui.config)
             # lesson_list_old = get_on_lesson_old()
+        except SessionExpiredError as exc:
+            trigger_session_refresh(f"登录会话已失效，已停止监听: {exc}")
+            main_ui.is_active = False
+            stop_all_lessons()
+            return
+        except ApiResponseError as exc:
+            main_ui.add_message_signal.emit(str(exc), 4)
         except requests.exceptions.ConnectionError:
             meg = "网络异常，监听中断"
             main_ui.add_message_signal.emit(meg,8)
@@ -33,8 +58,21 @@ def monitor(main_ui):
             ret = test_network()
             if ret == True:
                 try:
+                    sessionid = str(main_ui.config.get("sessionid", "")).strip()
+                    if not sessionid:
+                        trigger_session_refresh("未检测到 sessionid，已停止监听并等待重新登录")
+                        main_ui.is_active = False
+                        stop_all_lessons()
+                        return
                     lesson_list = get_on_lesson(sessionid, main_ui.config)
                     # lesson_list_old = get_on_lesson_old()
+                except SessionExpiredError as exc:
+                    trigger_session_refresh(f"登录会话已失效，已停止监听: {exc}")
+                    main_ui.is_active = False
+                    stop_all_lessons()
+                    return
+                except ApiResponseError as exc:
+                    main_ui.add_message_signal.emit(str(exc), 4)
                 except:
                     pass
                 else:
@@ -49,8 +87,7 @@ def monitor(main_ui):
                 timer += 1
                 if not main_ui.is_active:
                     # 由于on_lesson_list在多线程操作之下，此处必须使用列表复制，以保证列表完整性
-                    for lesson in on_lesson_list.copy():
-                        lesson.wsapp.close()
+                    stop_all_lessons()
                     return
         # 课程列表
         for lesson in lesson_list:
@@ -85,6 +122,5 @@ def monitor(main_ui):
             timer += 1
             if not main_ui.is_active:
                 # 由于on_lesson_list在多线程操作之下，此处必须使用列表复制，以保证列表完整性
-                for lesson in on_lesson_list.copy():
-                    lesson.wsapp.close()
+                stop_all_lessons()
                 return

@@ -35,6 +35,9 @@ const form = reactive({
   audio_network_info: true,
 
   llm_api_key: "",
+  llm_api_key_configured: false,
+  llm_api_key_dirty: false,
+  llm_api_key_clear: false,
   llm_base_url: "",
   llm_model: "",
   llm_thinking_model: "",
@@ -45,7 +48,10 @@ const form = reactive({
   llm_save_log: true,
 });
 
+let patchingForm = false;
+
 function patchForm(cfg = {}) {
+  patchingForm = true;
   form.auto_danmu = !!cfg.auto_danmu;
   form.danmu_limit = Number(cfg.danmu_config?.danmu_limit ?? 5);
   form.audio_on = !!cfg.audio_on;
@@ -67,7 +73,10 @@ function patchForm(cfg = {}) {
   form.audio_network_info = !!audioType.network_info;
 
   const llm = cfg.llm_config || {};
-  form.llm_api_key = llm.api_key ?? "";
+  form.llm_api_key = "";
+  form.llm_api_key_configured = !!(llm.api_key_configured || llm.api_key);
+  form.llm_api_key_dirty = false;
+  form.llm_api_key_clear = false;
   form.llm_base_url = llm.base_url ?? "";
   form.llm_model = llm.model ?? "";
   form.llm_thinking_model = llm.thinking_model ?? "";
@@ -76,9 +85,37 @@ function patchForm(cfg = {}) {
   form.llm_connect_timeout = Number(llm.connect_timeout ?? 10);
   form.llm_test_timeout = Number(llm.test_timeout ?? 15);
   form.llm_save_log = !!llm.save_log;
+  patchingForm = false;
+}
+
+function clearSavedApiKey() {
+  form.llm_api_key = "";
+  form.llm_api_key_clear = true;
+  form.llm_api_key_dirty = false;
+  form.llm_api_key_configured = false;
 }
 
 function toConfig() {
+  const llmConfig = {
+    base_url: form.llm_base_url,
+    model: form.llm_model,
+    thinking_model: form.llm_thinking_model,
+    vl_model: form.llm_vl_model,
+    answer_timeout: Number(form.llm_answer_timeout || 120),
+    connect_timeout: Number(form.llm_connect_timeout || 10),
+    test_timeout: Number(form.llm_test_timeout || 15),
+    save_log: !!form.llm_save_log,
+  };
+
+  if (form.llm_api_key_clear) {
+    llmConfig.api_key = "";
+  } else if (form.llm_api_key_dirty) {
+    const key = String(form.llm_api_key || "").trim();
+    if (key) {
+      llmConfig.api_key = key;
+    }
+  }
+
   return {
     auto_danmu: !!form.auto_danmu,
     danmu_config: {
@@ -106,17 +143,7 @@ function toConfig() {
         },
       },
     },
-    llm_config: {
-      api_key: form.llm_api_key,
-      base_url: form.llm_base_url,
-      model: form.llm_model,
-      thinking_model: form.llm_thinking_model,
-      vl_model: form.llm_vl_model,
-      answer_timeout: Number(form.llm_answer_timeout || 120),
-      connect_timeout: Number(form.llm_connect_timeout || 10),
-      test_timeout: Number(form.llm_test_timeout || 15),
-      save_log: !!form.llm_save_log,
-    },
+    llm_config: llmConfig,
     auto_save_ppt: !!form.auto_save_ppt,
     enable_devtools: !!form.enable_devtools,
     debug_mode: !!form.debug_mode,
@@ -129,6 +156,19 @@ watch(
     patchForm(value || {});
   },
   { deep: true, immediate: true }
+);
+
+watch(
+  () => form.llm_api_key,
+  (value) => {
+    if (patchingForm) return;
+    const key = String(value || "").trim();
+    form.llm_api_key_dirty = true;
+    if (key) {
+      form.llm_api_key_clear = false;
+      form.llm_api_key_configured = true;
+    }
+  }
 );
 
 watch(
@@ -210,7 +250,23 @@ watch(
             <span>LLM 配置</span>
           </template>
           <el-form label-position="left" label-width="110px" :disabled="disabled">
-            <el-form-item label="API Key"><el-input v-model="form.llm_api_key" /></el-form-item>
+            <el-form-item label="API Key">
+              <el-input v-model="form.llm_api_key" type="password" show-password :placeholder="form.llm_api_key_configured ? '已配置（留空不修改）' : '输入新的 API Key'" />
+              <el-space style="margin-top: 6px" wrap>
+                <el-tag size="small" :type="form.llm_api_key_configured ? 'success' : 'info'">
+                  {{ form.llm_api_key_configured ? "已配置" : "未配置" }}
+                </el-tag>
+                <el-button
+                  size="small"
+                  type="danger"
+                  link
+                  :disabled="disabled || !form.llm_api_key_configured"
+                  @click="clearSavedApiKey"
+                >
+                  清空已保存 Key
+                </el-button>
+              </el-space>
+            </el-form-item>
             <el-form-item label="Base URL"><el-input v-model="form.llm_base_url" /></el-form-item>
             <el-form-item label="主模型"><el-input v-model="form.llm_model" /></el-form-item>
             <el-form-item label="思考模型"><el-input v-model="form.llm_thinking_model" /></el-form-item>

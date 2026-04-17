@@ -35,6 +35,11 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(config),
     }),
+  testDefaultLlm: (payload) =>
+    requestJson("/api/config/default/llm/test", {
+      method: "POST",
+      body: JSON.stringify(payload || {}),
+    }),
   listUsers: () => requestJson("/api/users"),
   getUserRuntime: (userId) => requestJson(`/api/users/${userId}/runtime`),
   getUserLogs: (userId, query = {}) => {
@@ -82,6 +87,11 @@ export const api = {
     requestJson(`/api/users/${userId}/config`, {
       method: "PUT",
       body: JSON.stringify(config),
+    }),
+  testUserLlm: (userId, payload) =>
+    requestJson(`/api/users/${userId}/config/llm/test`, {
+      method: "POST",
+      body: JSON.stringify(payload || {}),
     }),
   updateUserConfigMode: (userId, payload) =>
     requestJson(`/api/users/${userId}/config/mode`, {

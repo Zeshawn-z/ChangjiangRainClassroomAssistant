@@ -9,9 +9,10 @@ from Scripts.Utils import build_server_url, dict_result
 
 class LessonWSMixin:
     def on_open(self, wsapp):
+        ws_userid = getattr(self, "identity_id", None) or self.user_uid
         self.handshark = {
             "op": "hello",
-            "userid": self.user_uid,
+            "userid": ws_userid,
             "role": "student",
             "auth": self.auth,
             "lessonid": self.lessonid,
@@ -36,7 +37,11 @@ class LessonWSMixin:
             times += 1
             time.sleep(1)
         self.headers["Authorization"] = "Bearer %s" % set_auth
-        return dict_result(r.text)["data"]["lessonToken"]
+        checkin_data = dict_result(r.text).get("data", {})
+        identity_id = checkin_data.get("identityId")
+        if identity_id is not None:
+            self.identity_id = str(identity_id)
+        return checkin_data["lessonToken"]
 
     def on_message(self, wsapp, message):
         data = dict_result(message)

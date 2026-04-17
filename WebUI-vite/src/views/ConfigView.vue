@@ -11,6 +11,11 @@ const ui = reactive({
   selectedUserId: "",
   userConfigDraft: {},
   userCustomEnabled: false,
+  llmTestPrompt: "请用一句话回复：连接测试成功。",
+  defaultLlmTestLoading: false,
+  userLlmTestLoading: false,
+  defaultLlmTestResult: null,
+  userLlmTestResult: null,
 });
 
 const users = computed(() => store.state.users || []);
@@ -84,6 +89,57 @@ async function clearOverrides() {
   ui.userCustomEnabled = false;
   ElMessage.success("已清空覆盖配置");
 }
+
+function normalizeTestResult(payload) {
+  return payload?.result || payload || null;
+}
+
+async function testDefaultLlm() {
+  ui.defaultLlmTestLoading = true;
+  try {
+    const data = await store.api.testDefaultLlm({
+      prompt: ui.llmTestPrompt,
+      config: ui.defaultConfigDraft,
+    });
+    ui.defaultLlmTestResult = normalizeTestResult(data);
+    if (data?.ok) {
+      ElMessage.success(data?.message || "测试成功");
+    } else {
+      ElMessage.error(data?.message || "测试失败");
+    }
+  } catch (err) {
+    ui.defaultLlmTestResult = null;
+    ElMessage.error(err?.message || String(err));
+  } finally {
+    ui.defaultLlmTestLoading = false;
+  }
+}
+
+async function testUserLlm() {
+  if (!selectedUser.value) return;
+  ui.userLlmTestLoading = true;
+  try {
+    const data = await store.api.testUserLlm(selectedUser.value.id, {
+      prompt: ui.llmTestPrompt,
+      config: ui.userConfigDraft,
+    });
+    ui.userLlmTestResult = normalizeTestResult(data);
+    if (data?.ok) {
+      ElMessage.success(data?.message || "测试成功");
+    } else {
+      ElMessage.error(data?.message || "测试失败");
+    }
+  } catch (err) {
+    ui.userLlmTestResult = null;
+    ElMessage.error(err?.message || String(err));
+  } finally {
+    ui.userLlmTestLoading = false;
+  }
+}
+
+function outputText(result, key) {
+  return result?.[key]?.output || "";
+}
 </script>
 
 <template>
@@ -94,7 +150,10 @@ async function clearOverrides() {
           <template #header>
             <div class="page-title-row">
               <span>默认配置（系统）</span>
-              <el-button type="primary" @click="saveDefaultConfig">保存默认配置</el-button>
+              <el-space>
+                <el-button :loading="ui.defaultLlmTestLoading" @click="testDefaultLlm">测试模型连通</el-button>
+                <el-button type="primary" @click="saveDefaultConfig">保存默认配置</el-button>
+              </el-space>
             </div>
           </template>
           <el-alert
@@ -104,6 +163,58 @@ async function clearOverrides() {
             show-icon
             class="row-gap"
           />
+          <el-form label-position="top" class="row-gap">
+            <el-form-item label="模型测试 Prompt">
+              <el-input
+                v-model="ui.llmTestPrompt"
+                type="textarea"
+                :rows="3"
+                placeholder="输入用于模型连通测试的 Prompt"
+              />
+            </el-form-item>
+          </el-form>
+          <el-card v-if="ui.defaultLlmTestResult" shadow="never" class="row-gap">
+            <template #header>
+              <div class="page-title-row" style="margin-bottom: 0">
+                <span>默认配置测试结果</span>
+                <small>Prompt: {{ ui.defaultLlmTestResult.prompt || "-" }}</small>
+              </div>
+            </template>
+            <el-space wrap>
+              <el-tag :type="ui.defaultLlmTestResult.thinking?.ok ? 'success' : 'danger'">
+                Thinking: {{ ui.defaultLlmTestResult.thinking?.ok ? "成功" : "失败" }}
+              </el-tag>
+              <el-tag :type="ui.defaultLlmTestResult.vl?.ok ? 'success' : 'danger'">
+                VL: {{ ui.defaultLlmTestResult.vl?.ok ? "成功" : "失败" }}
+              </el-tag>
+            </el-space>
+            <el-descriptions :column="1" border style="margin-top: 10px">
+              <el-descriptions-item label="Thinking 模型">
+                {{ ui.defaultLlmTestResult.thinking?.model || "-" }}
+              </el-descriptions-item>
+              <el-descriptions-item label="Thinking 结果">
+                {{ ui.defaultLlmTestResult.thinking?.message || "-" }}
+              </el-descriptions-item>
+              <el-descriptions-item label="Thinking 耗时(ms)">
+                {{ ui.defaultLlmTestResult.thinking?.elapsed_ms ?? "-" }}
+              </el-descriptions-item>
+              <el-descriptions-item label="Thinking 返回文本">
+                <pre class="test-output">{{ outputText(ui.defaultLlmTestResult, "thinking") }}</pre>
+              </el-descriptions-item>
+              <el-descriptions-item label="VL 模型">
+                {{ ui.defaultLlmTestResult.vl?.model || "-" }}
+              </el-descriptions-item>
+              <el-descriptions-item label="VL 结果">
+                {{ ui.defaultLlmTestResult.vl?.message || "-" }}
+              </el-descriptions-item>
+              <el-descriptions-item label="VL 耗时(ms)">
+                {{ ui.defaultLlmTestResult.vl?.elapsed_ms ?? "-" }}
+              </el-descriptions-item>
+              <el-descriptions-item label="VL 返回文本">
+                <pre class="test-output">{{ outputText(ui.defaultLlmTestResult, "vl") }}</pre>
+              </el-descriptions-item>
+            </el-descriptions>
+          </el-card>
           <ConfigEditor v-model="ui.defaultConfigDraft" />
         </el-card>
       </el-col>
@@ -113,7 +224,10 @@ async function clearOverrides() {
           <template #header>
             <div class="page-title-row">
               <span>用户配置覆盖</span>
-              <el-button type="primary" :disabled="!selectedUser" @click="saveUserConfig">保存用户配置</el-button>
+              <el-space>
+                <el-button :loading="ui.userLlmTestLoading" :disabled="!selectedUser" @click="testUserLlm">测试模型连通</el-button>
+                <el-button type="primary" :disabled="!selectedUser" @click="saveUserConfig">保存用户配置</el-button>
+              </el-space>
             </div>
           </template>
 
@@ -148,9 +262,62 @@ async function clearOverrides() {
             class="row-gap"
           />
 
+          <el-card v-if="ui.userLlmTestResult" shadow="never" class="row-gap">
+            <template #header>
+              <div class="page-title-row" style="margin-bottom: 0">
+                <span>用户配置测试结果</span>
+                <small>Prompt: {{ ui.userLlmTestResult.prompt || "-" }}</small>
+              </div>
+            </template>
+            <el-space wrap>
+              <el-tag :type="ui.userLlmTestResult.thinking?.ok ? 'success' : 'danger'">
+                Thinking: {{ ui.userLlmTestResult.thinking?.ok ? "成功" : "失败" }}
+              </el-tag>
+              <el-tag :type="ui.userLlmTestResult.vl?.ok ? 'success' : 'danger'">
+                VL: {{ ui.userLlmTestResult.vl?.ok ? "成功" : "失败" }}
+              </el-tag>
+            </el-space>
+            <el-descriptions :column="1" border style="margin-top: 10px">
+              <el-descriptions-item label="Thinking 模型">
+                {{ ui.userLlmTestResult.thinking?.model || "-" }}
+              </el-descriptions-item>
+              <el-descriptions-item label="Thinking 结果">
+                {{ ui.userLlmTestResult.thinking?.message || "-" }}
+              </el-descriptions-item>
+              <el-descriptions-item label="Thinking 耗时(ms)">
+                {{ ui.userLlmTestResult.thinking?.elapsed_ms ?? "-" }}
+              </el-descriptions-item>
+              <el-descriptions-item label="Thinking 返回文本">
+                <pre class="test-output">{{ outputText(ui.userLlmTestResult, "thinking") }}</pre>
+              </el-descriptions-item>
+              <el-descriptions-item label="VL 模型">
+                {{ ui.userLlmTestResult.vl?.model || "-" }}
+              </el-descriptions-item>
+              <el-descriptions-item label="VL 结果">
+                {{ ui.userLlmTestResult.vl?.message || "-" }}
+              </el-descriptions-item>
+              <el-descriptions-item label="VL 耗时(ms)">
+                {{ ui.userLlmTestResult.vl?.elapsed_ms ?? "-" }}
+              </el-descriptions-item>
+              <el-descriptions-item label="VL 返回文本">
+                <pre class="test-output">{{ outputText(ui.userLlmTestResult, "vl") }}</pre>
+              </el-descriptions-item>
+            </el-descriptions>
+          </el-card>
+
           <ConfigEditor v-model="ui.userConfigDraft" :disabled="!ui.userCustomEnabled || !selectedUser" />
         </el-card>
       </el-col>
     </el-row>
   </section>
 </template>
+
+<style scoped>
+.test-output {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow: auto;
+}
+</style>

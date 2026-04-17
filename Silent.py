@@ -86,6 +86,16 @@ def create_app():
         ok, msg = service.update_default_config(payload)
         return jsonify({"ok": ok, "message": msg, "config": service.get_default_config()})
 
+    @app.post("/api/config/default/llm/test")
+    def api_test_default_llm():
+        payload = request.get_json(silent=True) or {}
+        prompt = payload.get("prompt", "")
+        config_patch = payload.get("config")
+        if not isinstance(config_patch, dict):
+            config_patch = payload if isinstance(payload, dict) else {}
+        ok, msg, result = service.test_llm_prompt(prompt=prompt, config_patch=config_patch, user_id=None)
+        return jsonify({"ok": ok, "message": msg, "result": result})
+
     @app.get("/api/users")
     def api_users():
         users = service.list_users()
@@ -154,6 +164,17 @@ def create_app():
         payload = request.get_json(silent=True) or {}
         ok, msg = service.update_user_config(user_id=user_id, config_patch=payload)
         return jsonify({"ok": ok, "message": msg, "user": service.get_user(user_id)})
+
+    @app.post("/api/users/<user_id>/config/llm/test")
+    def api_test_user_llm(user_id):
+        payload = request.get_json(silent=True) or {}
+        prompt = payload.get("prompt", "")
+        config_patch = payload.get("config")
+        if not isinstance(config_patch, dict):
+            config_patch = payload if isinstance(payload, dict) else {}
+        ok, msg, result = service.test_llm_prompt(prompt=prompt, config_patch=config_patch, user_id=user_id)
+        status_code = 404 if msg == "用户不存在" else 200
+        return jsonify({"ok": ok, "message": msg, "result": result}), status_code
 
     @app.put("/api/users/<user_id>/config/mode")
     def api_update_config_mode(user_id):

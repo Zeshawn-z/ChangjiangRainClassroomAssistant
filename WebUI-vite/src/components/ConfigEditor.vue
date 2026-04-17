@@ -21,6 +21,8 @@ const form = reactive({
   auto_answer: true,
   answer_delay_type: 1,
   answer_delay_custom: 0,
+  answer_delay_random_min: 5,
+  answer_delay_random_max: 20,
   auto_save_ppt: true,
   enable_devtools: false,
   debug_mode: false,
@@ -58,6 +60,8 @@ function patchForm(cfg = {}) {
   form.auto_answer = !!cfg.auto_answer;
   form.answer_delay_type = Number(cfg.answer_config?.answer_delay?.type ?? 1);
   form.answer_delay_custom = Number(cfg.answer_config?.answer_delay?.custom?.time ?? 0);
+  form.answer_delay_random_min = Number(cfg.answer_config?.answer_delay?.custom?.min ?? 5);
+  form.answer_delay_random_max = Number(cfg.answer_config?.answer_delay?.custom?.max ?? 20);
   form.auto_save_ppt = !!cfg.auto_save_ppt;
   form.enable_devtools = !!cfg.enable_devtools;
   form.debug_mode = !!cfg.debug_mode;
@@ -140,6 +144,8 @@ function toConfig() {
         type: Number(form.answer_delay_type || 1),
         custom: {
           time: Number(form.answer_delay_custom || 0),
+          min: Number(form.answer_delay_random_min || 0),
+          max: Number(form.answer_delay_random_max || 0),
         },
       },
     },
@@ -215,7 +221,14 @@ watch(
                 <el-option :value="2" label="固定延迟" />
               </el-select>
             </el-form-item>
-            <el-form-item label="自定义延迟(秒)">
+            <el-form-item v-if="form.answer_delay_type === 1" label="随机延迟范围(秒)">
+              <el-space>
+                <el-input-number v-model="form.answer_delay_random_min" :min="0" :max="600" />
+                <span>-</span>
+                <el-input-number v-model="form.answer_delay_random_max" :min="0" :max="600" />
+              </el-space>
+            </el-form-item>
+            <el-form-item v-if="form.answer_delay_type === 2" label="固定延迟(秒)">
               <el-input-number v-model="form.answer_delay_custom" :min="0" :max="600" />
             </el-form-item>
           </el-form>

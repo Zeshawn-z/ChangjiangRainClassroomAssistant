@@ -80,7 +80,7 @@ def test_network():
     except:
         return False
 
-def calculate_waittime(limit, type, custom_time):
+def calculate_waittime(limit, type, custom_time, custom_min=5, custom_max=20):
     # 计算答题等待时间
     '''
     type
@@ -99,13 +99,19 @@ def calculate_waittime(limit, type, custom_time):
         return wait_time
 
     if type == 1:
-        wait_time = default_calculate(limit)
+        min_time = max(0, int(custom_min if custom_min is not None else 5))
+        max_time = max(0, int(custom_max if custom_max is not None else 20))
+        if min_time > max_time:
+            min_time, max_time = max_time, min_time
+        wait_time = random.randint(min_time, max_time)
     elif type == 2:
         # 如果自定义等待时间超过当前题目的剩余时间，则采用默认算法
         if custom_time > limit:
             wait_time = default_calculate(limit)
         else:
             wait_time = custom_time
+    else:
+        wait_time = 0
     return wait_time
 
 def get_initial_data():
@@ -136,7 +142,9 @@ def get_initial_data():
             "answer_delay":{
                 "type":1,
                 "custom":{
-                    "time":0
+                    "time":0,
+                    "min":5,
+                    "max":20
                 }
             }
         },

@@ -178,7 +178,30 @@ class LLMHandler:
             return [s] if s else []
         return []
 
-    def _build_thinking_messages(self, question_text, options, image_urls):
+    def _resolve_question_type_hint(self, problem_data, options):
+        raw_type = None
+        if isinstance(problem_data, dict):
+            raw_type = problem_data.get("problemType")
+
+        type_code = None
+        if isinstance(raw_type, (int, float)):
+            type_code = int(raw_type)
+        elif isinstance(raw_type, str) and raw_type.strip().isdigit():
+            type_code = int(raw_type.strip())
+
+        if type_code == 1:
+            return "单选题(problemType=1)", "Must return exactly 1 answer. Use option keys like A/B/C.", type_code
+        if type_code == 2:
+            return "多选题(problemType=2)", "May return multiple answers. Use option keys like A/B/C.", type_code
+        if type_code == 3:
+            return "填空题(problemType=3)", "Return text answers for blanks, not option keys.", type_code
+
+        if isinstance(options, list) and not options:
+            return "填空题(推断)", "Likely fill-blank. Return text answers.", None
+
+        return "选择题(problemType缺失或异常)", "Return the most likely option keys; may be 1 or multiple answers.", None
+
+    def _build_thinking_messages(self, question_text, options, question_type_label, question_type_rule, image_urls):
         options_text = ""
         if options:
             lines = []
@@ -195,6 +218,8 @@ class LLMHandler:
 
         user_prompt = (
             "Solve the question with available text/context.\n"
+            f"Question Type: {question_type_label}\n"
+            f"Type Rule: {question_type_rule}\n"
             f"Question: {question_text}\n"
             f"Options:\n{options_text}\n\n"
             "If image information is required but missing, return exactly:\n"
@@ -211,7 +236,7 @@ class LLMHandler:
             {"role": "user", "content": content},
         ]
 
-    def _build_vl_messages(self, question_text, options, image_urls):
+    def _build_vl_messages(self, question_text, options, question_type_label, question_type_rule, image_urls):
         options_text = ""
         if options:
             lines = []
@@ -228,6 +253,8 @@ class LLMHandler:
 
         user_prompt = (
             "Use the provided PPT images to solve the same question.\n"
+            f"Question Type: {question_type_label}\n"
+            f"Type Rule: {question_type_rule}\n"
             f"Question: {question_text}\n"
             f"Options:\n{options_text}\n\n"
             "Return strictly:\n"
@@ -265,13 +292,20 @@ class LLMHandler:
             image_urls.append(problem_data["cover"])
 
         options = problem_data.get("options", []) if isinstance(problem_data, dict) else []
-        return text_content, options, image_urls
+        question_type_label, question_type_rule, _ = self._resolve_question_type_hint(problem_data, options)
+        return text_content, options, image_urls, question_type_label, question_type_rule
 
     def get_answer(self, problem_data, fallback_images=None):
-        question_text, options, image_urls = self._build_question_text(problem_data)
+        question_text, options, image_urls, question_type_label, question_type_rule = self._build_question_text(problem_data)
 
         # 第一阶段：默认走 thinking 模型
-        thinking_messages = self._build_thinking_messages(question_text, options, image_urls)
+        thinking_messages = self._build_thinking_messages(
+            question_text,
+            options,
+            question_type_label,
+            question_type_rule,
+            image_urls,
+        )
         try:
             thinking_content = self._request_completion(
                 messages=thinking_messages,
@@ -313,7 +347,13 @@ class LLMHandler:
             self._write_log("llm_need_image_but_no_ppt", {"question": question_text})
             return []
 
-        vl_messages = self._build_vl_messages(question_text, options, ppt_images)
+        vl_messages = self._build_vl_messages(
+            question_text,
+            options,
+            question_type_label,
+            question_type_rule,
+            ppt_images,
+        )
         try:
             vl_content = self._request_completion(
                 messages=vl_messages,
@@ -367,3 +407,54 @@ class LLMHandler:
             return False, f"连接失败: HTTP {response.status_code} {response.text}"
         except Exception as e:
             return False, f"连接异常: {str(e)}"
+
+    def test_prompt(self, prompt, model=""):
+        """
+        Perform a real chat completion test with a prompt.
+        Returns: (bool, message, output, elapsed_ms)
+        """
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        target_model = (model or self.thinking_model).strip()
+        text_prompt = str(prompt or "").strip() or "请简短回复：连接测试成功。"
+
+        data = {
+            "model": target_model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant. Reply briefly in plain text.",
+                },
+                {
+                    "role": "user",
+                    "content": text_prompt,
+                },
+            ],
+            "temperature": 0.2,
+        }
+
+        begin = time.time()
+        try:
+            response = requests.post(
+                f"{self.base_url}/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=(self.connect_timeout, self.test_timeout),
+            )
+            elapsed_ms = int((time.time() - begin) * 1000)
+            if response.status_code in (401, 403):
+                return False, "连接失败: API Key 无效或无权限", "", elapsed_ms
+            response.raise_for_status()
+
+            payload = response.json()
+            choices = payload.get("choices", []) if isinstance(payload, dict) else []
+            message = choices[0].get("message", {}) if choices and isinstance(choices[0], dict) else {}
+            output = str(message.get("content", "") or "").strip()
+            if not output:
+                return False, "模型未返回有效文本", "", elapsed_ms
+            return True, f"连接成功（模型: {target_model}）", output, elapsed_ms
+        except Exception as e:
+            elapsed_ms = int((time.time() - begin) * 1000)
+            return False, f"连接异常: {str(e)}", "", elapsed_ms

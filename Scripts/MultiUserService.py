@@ -18,6 +18,11 @@ from Scripts.Utils import (
     normalize_server_key,
 )
 
+try:
+    from Scripts.LLM import LLMHandler
+except ImportError:
+    LLMHandler = None
+
 
 def _bool_value(value, default=False):
     if value is None:
@@ -792,6 +797,125 @@ class MultiUserService:
                     context.update_config(self._build_effective_config_locked(user))
             self._save_state_locked()
         return True, "ok"
+
+    @staticmethod
+    def _normalize_llm_config_for_test(llm_cfg):
+        cfg = llm_cfg if isinstance(llm_cfg, dict) else {}
+        api_key = str(cfg.get("api_key", "") or "").strip()
+        if not api_key:
+            return None, "未配置 API Key"
+
+        base_url = str(cfg.get("base_url", "") or "").strip() or "https://api.siliconflow.cn/v1"
+        legacy_model = str(cfg.get("model", "") or "").strip()
+        thinking_model = str(cfg.get("thinking_model", "") or "").strip() or legacy_model or "gpt-4o-mini"
+        vl_model = str(cfg.get("vl_model", "") or "").strip() or thinking_model
+
+        try:
+            answer_timeout = int(cfg.get("answer_timeout", 120) or 120)
+        except Exception:
+            answer_timeout = 120
+        try:
+            connect_timeout = int(cfg.get("connect_timeout", 10) or 10)
+        except Exception:
+            connect_timeout = 10
+        try:
+            test_timeout = int(cfg.get("test_timeout", 15) or 15)
+        except Exception:
+            test_timeout = 15
+
+        normalized = {
+            "api_key": api_key,
+            "base_url": base_url,
+            "model": legacy_model or thinking_model,
+            "thinking_model": thinking_model,
+            "vl_model": vl_model,
+            "answer_timeout": max(10, answer_timeout),
+            "connect_timeout": max(3, connect_timeout),
+            "test_timeout": max(5, test_timeout),
+        }
+        return normalized, "ok"
+
+    def test_llm_prompt(self, prompt="", config_patch=None, user_id=None):
+        if not LLMHandler:
+            return False, "LLM 模块加载失败，请检查依赖", {
+                "prompt": str(prompt or ""),
+                "thinking": None,
+                "vl": None,
+            }
+
+        with self._lock:
+            if user_id:
+                user = self.users.get(user_id)
+                if not user:
+                    return False, "用户不存在", {
+                        "prompt": str(prompt or ""),
+                        "thinking": None,
+                        "vl": None,
+                    }
+                base_config = self._build_effective_config_locked(user)
+            else:
+                base_config = copy.deepcopy(self.default_config)
+
+        merged_config = self._deep_merge(base_config, config_patch if isinstance(config_patch, dict) else {})
+        llm_cfg, msg = self._normalize_llm_config_for_test(merged_config.get("llm_config", {}))
+        if not llm_cfg:
+            return False, msg, {
+                "prompt": str(prompt or ""),
+                "thinking": None,
+                "vl": None,
+            }
+
+        handler = LLMHandler(
+            api_key=llm_cfg["api_key"],
+            base_url=llm_cfg["base_url"],
+            model=llm_cfg["model"],
+            thinking_model=llm_cfg["thinking_model"],
+            vl_model=llm_cfg["vl_model"],
+            answer_timeout=llm_cfg["answer_timeout"],
+            connect_timeout=llm_cfg["connect_timeout"],
+            test_timeout=llm_cfg["test_timeout"],
+            save_log=False,
+        )
+
+        test_prompt = str(prompt or "").strip() or "请用一句话回复：连接测试成功。"
+
+        think_ok, think_msg, think_output, think_elapsed = handler.test_prompt(
+            prompt=test_prompt,
+            model=llm_cfg["thinking_model"],
+        )
+
+        vl_model = llm_cfg["vl_model"]
+        if vl_model == llm_cfg["thinking_model"]:
+            vl_ok = think_ok
+            vl_msg = "与 Thinking 模型相同，复用同一测试结果"
+            vl_output = think_output
+            vl_elapsed = think_elapsed
+        else:
+            vl_ok, vl_msg, vl_output, vl_elapsed = handler.test_prompt(
+                prompt=test_prompt,
+                model=vl_model,
+            )
+
+        ok = bool(think_ok and vl_ok)
+        message = "模型测试通过" if ok else "模型测试失败"
+        result = {
+            "prompt": test_prompt,
+            "thinking": {
+                "ok": bool(think_ok),
+                "message": str(think_msg or ""),
+                "model": llm_cfg["thinking_model"],
+                "elapsed_ms": int(think_elapsed),
+                "output": str(think_output or ""),
+            },
+            "vl": {
+                "ok": bool(vl_ok),
+                "message": str(vl_msg or ""),
+                "model": vl_model,
+                "elapsed_ms": int(vl_elapsed),
+                "output": str(vl_output or ""),
+            },
+        }
+        return ok, message, result
 
     def update_user_schedule(self, user_id, schedule_items):
         with self._lock:

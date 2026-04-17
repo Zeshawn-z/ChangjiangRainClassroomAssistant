@@ -1,6 +1,7 @@
 import json
 import threading
 import time
+import random
 
 import requests
 
@@ -220,9 +221,25 @@ class LessonSolveMixin:
         threading.Thread(target=self._auto_answer_task, args=(normalized_id,), daemon=True).start()
 
     def _auto_answer_task(self, problem_id):
-        delay = self.config.get("answer_config", {}).get("answer_delay", {}).get("custom", {}).get("time", 5)
-        if delay < 2:
-            delay = 2
+        answer_delay_cfg = self.config.get("answer_config", {}).get("answer_delay", {})
+        delay_type = int(answer_delay_cfg.get("type", 1))
+        custom_cfg = answer_delay_cfg.get("custom", {}) if isinstance(answer_delay_cfg.get("custom"), dict) else {}
+
+        if delay_type == 0:
+            delay = 0
+        elif delay_type == 2:
+            delay = int(custom_cfg.get("time", 0) or 0)
+        else:
+            min_delay = int(custom_cfg.get("min", 5) or 0)
+            max_delay = int(custom_cfg.get("max", 20) or 0)
+            if min_delay > max_delay:
+                min_delay, max_delay = max_delay, min_delay
+            min_delay = max(0, min_delay)
+            max_delay = max(0, max_delay)
+            delay = random.randint(min_delay, max_delay)
+
+        if delay < 0:
+            delay = 0
         time.sleep(delay)
 
         try:

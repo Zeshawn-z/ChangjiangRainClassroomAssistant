@@ -54,6 +54,7 @@ class HeadlessUserContext:
         self.courses = {}
         self.current_ppt = {"image_path": "", "info_text": ""}
         self.problem_snapshots = {}
+        self.active_lessons = {}
         self.on_session_expired = None
 
         self.add_message_signal = _SignalEmitter(self._on_add_message)
@@ -70,6 +71,54 @@ class HeadlessUserContext:
             index = self._next_course_index
             self._next_course_index += 1
             return index
+
+    def register_active_lesson(self, lesson_obj):
+        if lesson_obj is None:
+            return
+        lesson_id = str(getattr(lesson_obj, "lessonid", "") or "")
+        classroom_id = str(getattr(lesson_obj, "classroomid", "") or "")
+        if not lesson_id:
+            return
+        key = f"{lesson_id}:{classroom_id}"
+        with self._lock:
+            self.active_lessons[key] = lesson_obj
+
+    def unregister_active_lesson(self, lesson_obj):
+        if lesson_obj is None:
+            return
+        lesson_id = str(getattr(lesson_obj, "lessonid", "") or "")
+        classroom_id = str(getattr(lesson_obj, "classroomid", "") or "")
+        if not lesson_id:
+            return
+        key = f"{lesson_id}:{classroom_id}"
+        with self._lock:
+            self.active_lessons.pop(key, None)
+
+    def find_active_lesson(self, lesson_id=None, problem_id=None):
+        lesson_id_text = str(lesson_id or "").strip()
+        problem_id_text = str(problem_id or "").strip()
+
+        with self._lock:
+            lessons = list(self.active_lessons.values())
+
+        if lesson_id_text:
+            for lesson in lessons:
+                if str(getattr(lesson, "lessonid", "")) == lesson_id_text:
+                    if not problem_id_text:
+                        return lesson
+                    cache = getattr(lesson, "problem_cache", {})
+                    store = getattr(lesson, "problem_store", {})
+                    if problem_id_text in cache or problem_id_text in store:
+                        return lesson
+
+        if problem_id_text:
+            for lesson in lessons:
+                cache = getattr(lesson, "problem_cache", {})
+                store = getattr(lesson, "problem_store", {})
+                if problem_id_text in cache or problem_id_text in store:
+                    return lesson
+
+        return lessons[0] if lessons else None
 
     def _on_add_message(self, message, msg_type=0):
         entry = {
@@ -114,13 +163,20 @@ class HeadlessUserContext:
             self.current_ppt = info
         self._append_log_file({"event": "ppt_updated", "time": info["updated_at"], "info_text": info["info_text"]})
 
-    def on_problem_snapshot(self, lesson_id, lesson_name, problem_id, problem_data):
+    def on_problem_snapshot(self, lesson_id, lesson_name, problem_id, problem_data, page_no=None):
         key = str(problem_id)
+        page_value = None
+        try:
+            if page_no is not None:
+                page_value = int(page_no)
+        except Exception:
+            page_value = None
         with self._lock:
             self.problem_snapshots[key] = {
                 "lesson_id": str(lesson_id),
                 "lesson_name": str(lesson_name),
                 "problem_id": key,
+                "page_no": page_value,
                 "problem": copy.deepcopy(problem_data) if isinstance(problem_data, dict) else {},
                 "updated_at": datetime.datetime.now().isoformat(timespec="seconds"),
             }
@@ -238,6 +294,25 @@ class MultiUserService:
         data.pop("sessionid", None)
         data.pop("server", None)
         return data
+
+    @staticmethod
+    def _normalize_problem_answers(answers):
+        if isinstance(answers, list):
+            values = answers
+        else:
+            text = str(answers or "")
+            for sep in ["，", "|", "/", "、", "\n", "\t"]:
+                text = text.replace(sep, ",")
+            values = text.split(",")
+
+        normalized = []
+        for item in values:
+            text = str(item).strip()
+            if not text:
+                continue
+            if text not in normalized:
+                normalized.append(text)
+        return normalized
 
     @staticmethod
     def _normalize_schedule(schedule_items):
@@ -607,6 +682,76 @@ class MultiUserService:
                 "current_ppt": snap.get("current_ppt", {}),
                 "problems": snap.get("problems", []),
             }
+
+    def correct_problem_answer(self, user_id, problem_id, answers, lesson_id=None, submit_now=True):
+        normalized_problem_id = str(problem_id or "").strip()
+        if not normalized_problem_id:
+            return False, "题目ID不能为空", {}
+
+        normalized_answers = self._normalize_problem_answers(answers)
+        if not normalized_answers:
+            return False, "请至少输入一个答案", {}
+
+        with self._lock:
+            if user_id not in self.users:
+                return False, "用户不存在", {}
+            context = self.contexts.get(user_id)
+
+        if not context:
+            return False, "监听尚未启动，无法在线更正题目", {}
+
+        lesson = None
+        if hasattr(context, "find_active_lesson"):
+            lesson = context.find_active_lesson(lesson_id=lesson_id, problem_id=normalized_problem_id)
+        if not lesson:
+            return False, "未找到正在监听的课程或题目", {}
+
+        try:
+            if hasattr(lesson, "_normalize_problem_id"):
+                normalized_problem_id = lesson._normalize_problem_id(normalized_problem_id) or normalized_problem_id
+
+            lesson._set_problem_answers(normalized_problem_id, normalized_answers)
+
+            submit_attempted = bool(submit_now)
+            submit_ok = None
+            if submit_attempted:
+                submit_ok = bool(lesson.answer_problem(normalized_problem_id, normalized_answers))
+
+            submitted = bool(lesson._is_problem_answered(normalized_problem_id))
+            problem_data = lesson.problem_cache.get(normalized_problem_id)
+            if not isinstance(problem_data, dict):
+                problem_data = lesson.problem_store.get(normalized_problem_id, {})
+
+            page_no = lesson.problem_page_map.get(normalized_problem_id)
+            context.on_problem_snapshot(
+                lesson.lessonid,
+                lesson.lessonname,
+                normalized_problem_id,
+                problem_data,
+                page_no=page_no,
+            )
+
+            if submit_attempted:
+                if submit_ok:
+                    context.add_message_signal.emit(f"题目 {normalized_problem_id} 在线更正后已提交: {normalized_answers}", 1)
+                else:
+                    context.add_message_signal.emit(f"题目 {normalized_problem_id} 在线更正已保存，但提交失败", 4)
+            else:
+                context.add_message_signal.emit(f"题目 {normalized_problem_id} 在线更正答案已保存: {normalized_answers}", 0)
+
+            detail = {
+                "lesson_id": str(getattr(lesson, "lessonid", "") or ""),
+                "lesson_name": str(getattr(lesson, "lessonname", "") or ""),
+                "problem_id": normalized_problem_id,
+                "page_no": page_no,
+                "answers": normalized_answers,
+                "submit_attempted": submit_attempted,
+                "submit_ok": bool(submit_ok) if submit_attempted else None,
+                "submitted": submitted,
+            }
+            return True, "ok", detail
+        except Exception as exc:
+            return False, f"在线更正失败: {exc}", {}
 
     def get_user_logs(self, user_id, limit=200, message_types=None, keyword=""):
         with self._lock:

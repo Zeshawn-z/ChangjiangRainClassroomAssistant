@@ -84,6 +84,8 @@ const ui = reactive({
   runtimeLoading: false,
   scheduleDirty: false,
   bindingFromUser: false,
+  problemCorrectionDrafts: {},
+  problemCorrectionLoading: {},
 });
 
 function normalizeHm(value) {
@@ -137,6 +139,13 @@ let loginTimer = null;
 
 const users = computed(() => store.state.users || []);
 const selectedUser = computed(() => users.value.find((u) => u.id === ui.selectedUserId) || null);
+const recentProblems = computed(() => (ui.runtime.problems || []).slice(-20).reverse());
+
+const problemTypeMap = {
+  1: "单选题",
+  2: "多选题",
+  3: "填空题",
+};
 
 function buildLogKey(row) {
   if (!row) return "";
@@ -155,6 +164,121 @@ function getPptImageUrl() {
     return "";
   }
   return `/api/users/${selectedUser.value.id}/ppt/image?t=${ui.pptImageVersion}`;
+}
+
+function getProblemRowKey(item) {
+  const lessonId = item?.lesson_id || "";
+  const problemId = item?.problem_id || "";
+  return `${lessonId}:${problemId}`;
+}
+
+function getProblemTypeText(item) {
+  const ptype = Number(item?.problem?.problemType);
+  return problemTypeMap[ptype] || `类型${Number.isFinite(ptype) ? ptype : "未知"}`;
+}
+
+function getProblemPageText(item) {
+  const pageNo = Number(item?.page_no ?? item?.problem?.page_no);
+  if (Number.isInteger(pageNo) && pageNo > 0) {
+    return `第${pageNo}页`;
+  }
+  return "未知页";
+}
+
+function getProblemPreAnswerText(item) {
+  const answers = item?.problem?.answers;
+  if (Array.isArray(answers) && answers.length) {
+    return answers.join(", ");
+  }
+  return "暂无";
+}
+
+function getProblemQuestionText(item) {
+  const problem = item?.problem || {};
+  const body = problem.body;
+
+  if (typeof body === "string") {
+    return body.trim() || "暂无题干";
+  }
+
+  if (Array.isArray(body)) {
+    const text = body
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (part && typeof part === "object") return String(part.text || part.value || part.content || "");
+        return "";
+      })
+      .join(" ")
+      .trim();
+    return text || "暂无题干";
+  }
+
+  if (body && typeof body === "object") {
+    const text = String(body.text || body.value || body.content || body.stem || body.question || "").trim();
+    if (text) return text;
+  }
+
+  return "暂无题干";
+}
+
+function getProblemOptionsText(item) {
+  const options = item?.problem?.options;
+  if (!Array.isArray(options) || !options.length) {
+    return "无选项";
+  }
+
+  const text = options
+    .map((opt, index) => {
+      if (typeof opt === "string") {
+        return `${index + 1}. ${opt}`;
+      }
+      if (opt && typeof opt === "object") {
+        const key = String(opt.key || opt.label || opt.id || index + 1).trim();
+        const value = String(opt.value || opt.text || opt.content || "").trim();
+        return value ? `${key}. ${value}` : key;
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join(" | ");
+
+  return text || "无选项";
+}
+
+function isProblemSubmitted(item) {
+  const problem = item?.problem || {};
+  const result = problem.result;
+  if (result !== null && result !== undefined && !(Array.isArray(result) && result.length === 0) && result !== "") {
+    return true;
+  }
+  if (problem.myAnswer || problem.myanswer || problem.answered || problem.isAnswered) {
+    return true;
+  }
+  return false;
+}
+
+function getProblemDraft(item) {
+  const key = getProblemRowKey(item);
+  if (Object.prototype.hasOwnProperty.call(ui.problemCorrectionDrafts, key)) {
+    return ui.problemCorrectionDrafts[key];
+  }
+  const preAnswers = getProblemPreAnswerText(item);
+  return preAnswers === "暂无" ? "" : preAnswers;
+}
+
+function setProblemDraft(item, value) {
+  const key = getProblemRowKey(item);
+  ui.problemCorrectionDrafts[key] = value;
+}
+
+function parseProblemAnswers(value) {
+  const text = String(value || "").trim();
+  if (!text) return [];
+  return text
+    .replace(/[，|/、\n\t]/g, ",")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
 }
 
 function syncSelectedUser() {
@@ -385,6 +509,33 @@ async function stopMonitor() {
   ElMessage.success("已停止监听");
 }
 
+async function correctProblemAnswer(item, submitNow = true) {
+  if (!selectedUser.value) return;
+
+  const draft = getProblemDraft(item);
+  const answers = parseProblemAnswers(draft);
+  if (!answers.length) {
+    ElMessage.warning("请先输入有效答案，多个答案可用逗号分隔");
+    return;
+  }
+
+  const key = getProblemRowKey(item);
+  ui.problemCorrectionLoading[key] = true;
+  try {
+    await store.api.correctProblemAnswer(selectedUser.value.id, item.problem_id, {
+      lesson_id: item.lesson_id,
+      answers,
+      submit_now: !!submitNow,
+    });
+    ElMessage.success(submitNow ? "答案已更正并提交" : "答案已更正保存");
+    await Promise.all([refreshRuntime(), refreshLogs()]);
+  } catch (err) {
+    ElMessage.error(err?.message || "更正答案失败");
+  } finally {
+    ui.problemCorrectionLoading[key] = false;
+  }
+}
+
 function addSchedule() {
   const start = normalizeHm(ui.addStart);
   const end = normalizeHm(ui.addEnd);
@@ -604,7 +755,7 @@ onUnmounted(() => {
           <el-col :xs="24" :lg="12">
             <el-card class="page-card" shadow="never">
               <template #header>
-                <span>PPT 与题目预览</span>
+                <span>PPT预览</span>
               </template>
               <el-alert
                 :title="ui.runtime.current_ppt?.info_text || '暂无 PPT'"
@@ -618,15 +769,6 @@ onUnmounted(() => {
                 class="ppt-image"
                 alt="当前PPT"
               />
-              <div class="mini-list" style="margin-top: 10px">
-                <div v-if="!(ui.runtime.problems || []).length" class="empty-note">暂无题目</div>
-                <div v-for="item in (ui.runtime.problems || []).slice(-20).reverse()" :key="`${item.problem_id}-${item.lesson_name}`" class="item-row">
-                  <strong>{{ item.lesson_name }}</strong><br />
-                  题号: {{ item.problem_id }}<br />
-                  {{ item.problem?.body || "" }}<br />
-                  {{ Array.isArray(item.problem?.options) ? item.problem.options.map((o) => `${o.key}:${o.value}`).join(" | ") : "" }}
-                </div>
-              </div>
             </el-card>
           </el-col>
 
@@ -644,6 +786,62 @@ onUnmounted(() => {
             </el-card>
           </el-col>
         </el-row>
+
+        <el-card class="page-card row-gap" shadow="never">
+          <template #header>
+            <span>题目预览</span>
+          </template>
+          <el-table :data="recentProblems" stripe size="small" empty-text="暂无题目">
+            <el-table-column label="题号" min-width="100">
+              <template #default="{ row }">{{ row.problem_id }}</template>
+            </el-table-column>
+            <el-table-column label="题型" min-width="90">
+              <template #default="{ row }">{{ getProblemTypeText(row) }}</template>
+            </el-table-column>
+            <el-table-column label="题干" min-width="220" show-overflow-tooltip>
+              <template #default="{ row }">{{ getProblemQuestionText(row) }}</template>
+            </el-table-column>
+            <el-table-column label="选项" min-width="260" show-overflow-tooltip>
+              <template #default="{ row }">{{ getProblemOptionsText(row) }}</template>
+            </el-table-column>
+            <el-table-column label="页数" min-width="90">
+              <template #default="{ row }">{{ getProblemPageText(row) }}</template>
+            </el-table-column>
+            <el-table-column label="预解答案" min-width="140">
+              <template #default="{ row }">{{ getProblemPreAnswerText(row) }}</template>
+            </el-table-column>
+            <el-table-column label="已提交" min-width="90">
+              <template #default="{ row }">
+                <el-tag size="small" :type="isProblemSubmitted(row) ? 'success' : 'info'">
+                  {{ isProblemSubmitted(row) ? "是" : "否" }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="在线更正答案" min-width="280">
+              <template #default="{ row }">
+                <el-space>
+                  <el-input
+                    :model-value="getProblemDraft(row)"
+                    placeholder="输入答案，逗号分隔"
+                    style="width: 140px"
+                    @update:model-value="(v) => setProblemDraft(row, v)"
+                  />
+                  <el-button
+                    size="small"
+                    :loading="ui.problemCorrectionLoading[getProblemRowKey(row)]"
+                    @click="correctProblemAnswer(row, false)"
+                  >保存预解</el-button>
+                  <el-button
+                    size="small"
+                    type="primary"
+                    :loading="ui.problemCorrectionLoading[getProblemRowKey(row)]"
+                    @click="correctProblemAnswer(row, true)"
+                  >更正并提交</el-button>
+                </el-space>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
 
         <el-card class="page-card" shadow="never">
           <template #header>

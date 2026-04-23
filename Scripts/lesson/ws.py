@@ -72,6 +72,8 @@ class LessonWSMixin:
             # Only disconnect the currently active ws session.
             if getattr(self, "_ws_session_index", 1) != session_index:
                 return
+            delay_min = max(1, int(delay_seconds // 60))
+            self.add_message(f"{self.lessonname} WS会话{session_index}达到随机时长({delay_min}分钟)，主动断开", 7)
             try:
                 wsapp.close()
             except Exception:
@@ -234,6 +236,7 @@ class LessonWSMixin:
                 break
 
             self._ws_session_index += 1
+            self.add_message(f"{self.lessonname} WS立即重连，进入第{self._ws_session_index}次会话", 7)
 
         meg = "%s监听结束" % self.lessonname
         self.add_message(meg, 7)

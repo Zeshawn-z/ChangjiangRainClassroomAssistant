@@ -10,13 +10,13 @@ from Scripts.Utils import build_server_url, dict_result
 
 class LessonWSMixin:
     def on_open(self, wsapp):
-        identity_id = str(getattr(self, "identity_id", "") or "")
-        user_uid = str(self.user_uid)
-        if getattr(self, "_ws_session_index", 1) == 1:
-            ws_userid = identity_id or user_uid
+        session_index = getattr(self, "_ws_session_index", 1)
+        identity_id = getattr(self, "identity_id", None)
+        if session_index == 1:
+            ws_userid = identity_id or self.user_uid
         else:
-            candidates = [user_uid]
-            if identity_id and identity_id != user_uid:
+            candidates = [self.user_uid]
+            if identity_id and identity_id != self.user_uid:
                 candidates.append(identity_id)
             ws_userid = random.choice(candidates)
 
@@ -32,10 +32,7 @@ class LessonWSMixin:
         wsapp.send(json.dumps(self.handshark))
 
         # Session lifetime is randomized in minutes.
-        if getattr(self, "_ws_session_index", 1) == 1:
-            delay_seconds = random.randint(10, 30) * 60
-        else:
-            delay_seconds = random.randint(10, 30) * 60
+        delay_seconds = random.randint(10, 30) * 60
         self._schedule_auto_disconnect(wsapp, delay_seconds)
 
     def checkin_class(self):
@@ -212,7 +209,7 @@ class LessonWSMixin:
     def start_lesson(self, callback):
         self._lesson_finished = False
         self._ws_session_index = 1
-
+        self.auth = self.checkin_class()
         rtn = self.get_lesson_info()
         teacher = rtn["teacher"]["name"]
         title = rtn["title"]
@@ -227,8 +224,12 @@ class LessonWSMixin:
         self.add_course([self.lessonname, title, teacher, time_str], index)
 
         ws_url = build_server_url("/wsapp/", self.config, ws=True)
+        first_session = True
         while getattr(self.main_ui, "is_active", True) and not self._lesson_finished:
-            self.auth = self.checkin_class()
+            if first_session:
+                first_session = False
+            else:
+                self.auth = self.checkin_class()
             self.wsapp = websocket.WebSocketApp(url=ws_url, header=self.headers, on_open=self.on_open, on_message=self.on_message)
             self.wsapp.run_forever()
 

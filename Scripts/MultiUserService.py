@@ -180,15 +180,6 @@ class HeadlessUserContext:
                 "problem": copy.deepcopy(problem_data) if isinstance(problem_data, dict) else {},
                 "updated_at": datetime.datetime.now().isoformat(timespec="seconds"),
             }
-        self._append_log_file(
-            {
-                "event": "problem_snapshot",
-                "time": datetime.datetime.now().isoformat(timespec="seconds"),
-                "lesson_id": str(lesson_id),
-                "lesson_name": str(lesson_name),
-                "problem_id": key,
-            }
-        )
 
     def _append_log_file(self, data):
         if not self.log_file_path:

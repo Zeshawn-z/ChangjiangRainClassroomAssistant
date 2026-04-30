@@ -58,6 +58,35 @@ class LessonBaseMixin:
         except Exception as e:
             self._log_debug(f"保存题库文件失败: {e}")
 
+    def _emit_problem_snapshot(self, problem_id):
+        if not hasattr(self.main_ui, "on_problem_snapshot"):
+            return
+
+        normalized_id = self._normalize_problem_id(problem_id)
+        if not normalized_id:
+            return
+
+        problem_data = self.problem_cache.get(normalized_id)
+        if not isinstance(problem_data, dict):
+            problem_data = self.problem_store.get(normalized_id, {})
+
+        page_no = self.problem_page_map.get(normalized_id)
+        try:
+            self.main_ui.on_problem_snapshot(
+                self.lessonid,
+                self.lessonname,
+                normalized_id,
+                problem_data,
+                page_no=page_no,
+            )
+        except TypeError:
+            try:
+                self.main_ui.on_problem_snapshot(self.lessonid, self.lessonname, normalized_id, problem_data)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
     def _upsert_problem_store(self, problem_id, problem):
         if not isinstance(problem, dict):
             return
@@ -97,6 +126,7 @@ class LessonBaseMixin:
             self.problem_store[problem_id] = item
         item["answers"] = answers
         self._save_problem_store()
+        self._emit_problem_snapshot(problem_id)
 
     def _mark_problem_answered(self, problem_id, result=None):
         normalized_id = self._normalize_problem_id(problem_id)
@@ -110,6 +140,7 @@ class LessonBaseMixin:
             if result is not None:
                 self.problem_store[normalized_id]["result"] = result
         self._save_problem_store()
+        self._emit_problem_snapshot(normalized_id)
 
     def _is_problem_answered(self, problem_id):
         normalized_id = self._normalize_problem_id(problem_id)

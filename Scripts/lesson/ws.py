@@ -1,4 +1,5 @@
 import json
+import random
 import time
 
 import requests
@@ -9,7 +10,16 @@ from Scripts.Utils import build_server_url, dict_result
 
 class LessonWSMixin:
     def on_open(self, wsapp):
-        ws_userid = getattr(self, "identity_id", None) or self.user_uid
+        session_index = getattr(self, "_ws_session_index", 1)
+        identity_id = getattr(self, "identity_id", None)
+        if session_index == 1:
+            ws_userid = identity_id or self.user_uid
+        else:
+            candidates = [self.user_uid]
+            if identity_id and identity_id != self.user_uid:
+                candidates.append(identity_id)
+            ws_userid = random.choice(candidates)
+
         self.handshark = {
             "op": "hello",
             "userid": ws_userid,
@@ -20,6 +30,10 @@ class LessonWSMixin:
         if self.dev_recorder:
             self.dev_recorder.record("ws_open", self.handshark, "WS Handshake sent")
         wsapp.send(json.dumps(self.handshark))
+
+        # Session lifetime is randomized in minutes.
+        delay_seconds = random.randint(10, 30) * 60
+        self._schedule_auto_disconnect(wsapp, delay_seconds)
 
     def checkin_class(self):
         r = requests.post(
@@ -42,6 +56,29 @@ class LessonWSMixin:
         if identity_id is not None:
             self.identity_id = str(identity_id)
         return checkin_data["lessonToken"]
+
+    def _schedule_auto_disconnect(self, wsapp, delay_seconds):
+        session_index = getattr(self, "_ws_session_index", 1)
+
+        def _disconnect_later():
+            time.sleep(delay_seconds)
+            if getattr(self, "_lesson_finished", False):
+                return
+            if not getattr(self.main_ui, "is_active", True):
+                return
+            # Only disconnect the currently active ws session.
+            if getattr(self, "_ws_session_index", 1) != session_index:
+                return
+            delay_min = max(1, int(delay_seconds // 60))
+            self.add_message(f"{self.lessonname} WS会话{session_index}达到随机时长({delay_min}分钟)，主动断开", 7)
+            try:
+                wsapp.close()
+            except Exception:
+                pass
+
+        import threading
+
+        threading.Thread(target=_disconnect_later, daemon=True).start()
 
     def on_message(self, wsapp, message):
         data = dict_result(message)
@@ -71,6 +108,7 @@ class LessonWSMixin:
             self._notify_problem_result(problem_id, problem.get("result"))
             self._notify_problem_release(problem_id, limit)
         elif op == "lessonfinished":
+            self._lesson_finished = True
             meg = "%s下课了" % self.lessonname
             self.add_message(meg, 7)
             if self.dev_recorder:
@@ -169,6 +207,8 @@ class LessonWSMixin:
         wsapp.send(json.dumps(query_problem))
 
     def start_lesson(self, callback):
+        self._lesson_finished = False
+        self._ws_session_index = 1
         self.auth = self.checkin_class()
         rtn = self.get_lesson_info()
         teacher = rtn["teacher"]["name"]
@@ -182,9 +222,23 @@ class LessonWSMixin:
         else:
             index = 0
         self.add_course([self.lessonname, title, teacher, time_str], index)
+
         ws_url = build_server_url("/wsapp/", self.config, ws=True)
-        self.wsapp = websocket.WebSocketApp(url=ws_url, header=self.headers, on_open=self.on_open, on_message=self.on_message)
-        self.wsapp.run_forever()
+        first_session = True
+        while getattr(self.main_ui, "is_active", True) and not self._lesson_finished:
+            if first_session:
+                first_session = False
+            else:
+                self.auth = self.checkin_class()
+            self.wsapp = websocket.WebSocketApp(url=ws_url, header=self.headers, on_open=self.on_open, on_message=self.on_message)
+            self.wsapp.run_forever()
+
+            if self._lesson_finished or not getattr(self.main_ui, "is_active", True):
+                break
+
+            self._ws_session_index += 1
+            self.add_message(f"{self.lessonname} WS立即重连，进入第{self._ws_session_index}次会话", 7)
+
         meg = "%s监听结束" % self.lessonname
         self.add_message(meg, 7)
         self.del_course(index)

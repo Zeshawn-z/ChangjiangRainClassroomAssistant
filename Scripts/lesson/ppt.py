@@ -99,7 +99,6 @@ class LessonPPTMixin:
             if last_page == page_no:
                 return
             self.current_presentation_page[presentation_id] = page_no
-        self.add_message(f"{self.lessonname} 当前 PPT 第{page_no}页", 0)
         self._emit_current_ppt_image(presentation_id, page_no)
 
     def get_problems(self, presentationid):
@@ -167,7 +166,7 @@ class LessonPPTMixin:
                 self._upsert_problem_store(problem_id, problem)
                 if hasattr(self.main_ui, "on_problem_snapshot"):
                     try:
-                        self.main_ui.on_problem_snapshot(self.lessonid, self.lessonname, problem_id, problem)
+                        self.main_ui.on_problem_snapshot(self.lessonid, self.lessonname, problem_id, problem, page_no=page_no)
                     except Exception:
                         pass
                 self._notify_problem_result(problem_id, problem.get("result"))

@@ -9,7 +9,13 @@ def monitor(main_ui):
 
     def del_onclass(lesson_obj):
         # 作为回调函数传入start_lesson
-        on_lesson_list.remove(lesson_obj)
+        if lesson_obj in on_lesson_list:
+            on_lesson_list.remove(lesson_obj)
+        if hasattr(main_ui, "unregister_active_lesson"):
+            try:
+                main_ui.unregister_active_lesson(lesson_obj)
+            except Exception:
+                pass
 
     # 已经签到完成加入监听列表的课程
     on_lesson_list = []
@@ -104,6 +110,11 @@ def monitor(main_ui):
                 continue
 
             lesson_obj = Lesson(lessionid,lessonname,classroomid,main_ui)
+            if hasattr(main_ui, "register_active_lesson"):
+                try:
+                    main_ui.register_active_lesson(lesson_obj)
+                except Exception:
+                    pass
             thread = threading.Thread(target=lesson_obj.start_lesson,args=(del_onclass,),daemon=True)
             thread.start()
             meg = "检测到课程%s正在上课，已加入监听列表" % lessonname

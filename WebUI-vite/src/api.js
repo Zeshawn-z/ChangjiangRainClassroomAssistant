@@ -98,4 +98,9 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
+  correctProblemAnswer: (userId, problemId, payload) =>
+    requestJson(`/api/users/${userId}/problems/${problemId}/correct`, {
+      method: "POST",
+      body: JSON.stringify(payload || {}),
+    }),
 };

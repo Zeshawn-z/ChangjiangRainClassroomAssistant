@@ -270,6 +270,24 @@ def create_app():
         problems = user.get("problems", [])
         return jsonify({"ok": True, "problems": problems})
 
+    @app.post("/api/users/<user_id>/problems/<problem_id>/correct")
+    def api_correct_problem(user_id, problem_id):
+        payload = request.get_json(silent=True) or {}
+        lesson_id = payload.get("lesson_id")
+        answers = payload.get("answers")
+        submit_now = bool(payload.get("submit_now", True))
+        ok, msg, detail = service.correct_problem_answer(
+            user_id=user_id,
+            problem_id=problem_id,
+            answers=answers,
+            lesson_id=lesson_id,
+            submit_now=submit_now,
+        )
+        if ok:
+            return jsonify({"ok": True, "message": msg, "detail": detail})
+        status_code = 404 if msg == "用户不存在" else 400
+        return jsonify({"ok": False, "message": msg, "detail": detail}), status_code
+
     return app
 
 
